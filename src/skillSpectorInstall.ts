@@ -51,7 +51,6 @@ export type InstallOfferContext = "scan" | "publish" | "doctor";
 export interface InstallOfferOptions {
   /** Skip the interactive prompt and proceed as if the user said yes -- e.g. a --yes flag. */
   autoYes?: boolean;
-  /** publish/update frame this more insistently -- the RESULT, not just the scan, is weaker. */
   context: InstallOfferContext;
 }
 
@@ -59,8 +58,8 @@ export interface InstallOfferOptions {
 export async function offerToInstallSkillSpector(options: InstallOfferOptions): Promise<boolean> {
   const message =
     options.context === "publish"
-      ? "SkillSpector (the primary scanner) isn't installed -- publishing now would only be backed by the weaker fallback scanner, not the real security gate. Install it now?"
-      : "SkillSpector (the primary scanner) isn't installed. Install it now for a stronger check?";
+      ? "SkillSpector is required to publish -- it isn't installed. Install it now?"
+      : "SkillSpector is required to run a security scan -- it isn't installed. Install it now?";
 
   const proceed = options.autoYes || (await promptYesNo(message));
   if (!proceed) return false;

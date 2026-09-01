@@ -19,14 +19,9 @@ export interface ScanResult {
 }
 
 /**
- * A pluggable scan engine. `skillSpectorScanner` is the sole v1 implementation --
- * SkillSpector is a hard requirement, not one option among several (see
- * extra/plans/03-security-gate.md's 2026-09-01 correction: the previous fallback,
- * `patternScanner`, was a confirmed-redundant subset of SkillSpector's coverage and was
- * removed). Further engines can be added later behind this same interface for
- * multi-scanner *consensus* (extra/plans/07-roadmap.md, Phase 7) — a genuinely different
- * goal from "fallback when the primary is missing" — do not couple calling code to a
- * specific implementation.
+ * A pluggable scan engine. `skillSpectorScanner` is the sole implementation today.
+ * Further engines can be added later behind this same interface for multi-scanner
+ * consensus — do not couple calling code to a specific implementation.
  */
 export interface Scanner {
   name: string;

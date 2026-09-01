@@ -8,13 +8,13 @@ npm install -g skillfn
 
 ## `scan` — security gate
 
-**Required**: [NVIDIA SkillSpector](https://github.com/NVIDIA/SkillSpector) (Apache 2.0, runs fully offline, no API key) — there is no weaker fallback, by design; a scan result is meant to mean something. If it's not installed, `skillfn scan`/`publish`/`update`/`doctor` will interactively offer to install it for you the first time they need it (`uv tool install git+https://github.com/NVIDIA/skillspector.git` under the hood) — pass `--yes` to accept that offer non-interactively (e.g. in a script), or just install it yourself upfront:
+**Required**: [NVIDIA SkillSpector](https://github.com/NVIDIA/SkillSpector) (Apache 2.0, runs fully offline, no API key). If it's not installed, `skillfn scan`/`publish`/`update`/`doctor` will interactively offer to install it for you the first time they need it (`uv tool install git+https://github.com/NVIDIA/skillspector.git` under the hood) — pass `--yes` to accept that offer non-interactively (e.g. in a script), or just install it yourself upfront:
 
 ```
 uv tool install git+https://github.com/NVIDIA/skillspector.git
 ```
 
-This is a real interactive prompt, not something silently bundled into `npm install -g` itself — a postinstall script that silently fetches and runs another language's toolchain is exactly the kind of pattern this project's own scanner flags as risky in other people's skills, and it would also just silently do nothing for anyone who runs `npm install --ignore-scripts` (common in the security-conscious environments this tool is actually for). A more structured, arrow-key-navigable setup step at install time is planned but not yet built — today, declining the offer or running non-interactively means `scan`/`publish`/`update` refuse to produce a result rather than substituting a weaker one.
+`scan`/`publish`/`update` require it — declining the offer or running non-interactively means they exit without producing a result rather than proceeding some other way.
 
 ```
 skillfn scan ./path/to/some-skill

@@ -10,13 +10,7 @@ export interface RunScanOptions {
   autoYes?: boolean;
 }
 
-/**
- * SkillSpector is a hard requirement, not a nice-to-have with a fallback -- see
- * extra/plans/03-security-gate.md's 2026-09-01 correction. The removed `patternScanner`
- * was a strict, shallow subset of SkillSpector's 71-pattern/17-category coverage (confirmed
- * by direct comparison, not assumed) with zero unique value; presenting its weaker result
- * under the same "PASS" branding was a real quality-signaling problem for a trust product.
- */
+/** Thrown when SkillSpector isn't installed and the user declined (or the install failed). */
 export class SkillSpectorRequiredError extends Error {}
 
 export async function runScan(path: string, options: RunScanOptions = {}): Promise<ScanResult> {
@@ -35,7 +29,7 @@ export async function runScan(path: string, options: RunScanOptions = {}): Promi
         return await skillSpectorScanner.scan(path); // retry now that it's actually there
       }
       throw new SkillSpectorRequiredError(
-        "Skillfn requires SkillSpector to run a security scan -- there is no weaker fallback. Install it with:\n" +
+        "Skillfn requires SkillSpector to run a security scan. Install it with:\n" +
           "  uv tool install git+https://github.com/NVIDIA/skillspector.git\n" +
           "Then try again.",
       );

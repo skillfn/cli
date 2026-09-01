@@ -70,7 +70,7 @@ export async function doctorCommand(options: DoctorOptions = {}): Promise<void> 
   const hasSkillSpector = await checkLine("skillspector on PATH", async () =>
     (await isSkillSpectorInstalled())
       ? undefined
-      : "not found -- falls back to the weaker pattern scanner. Install: uv tool install git+https://github.com/NVIDIA/skillspector.git",
+      : "required, not found. Install: uv tool install git+https://github.com/NVIDIA/skillspector.git",
   );
   if (!hasSkillSpector) {
     await offerToInstallSkillSpector({ context: "doctor", autoYes: options.yes });
