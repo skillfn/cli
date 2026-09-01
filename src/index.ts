@@ -33,12 +33,13 @@ program
   .action(auditCommand);
 
 program
-  .command("link <skillName>")
+  .command("link [skillName]")
   .description(
-    "Make a locally installed skill available to another platform too (no hub required) — " +
-      "e.g. 'skillfn link my-skill --to openclaw' or '--to all'.",
+    "Make a locally installed skill available to another platform too (no hub required). " +
+      "Run with no arguments for an interactive picker, or 'skillfn link my-skill --to openclaw' " +
+      "(or '--to all') for scripts/AI agents.",
   )
-  .requiredOption("--to <platform>", "target platform id, or 'all'")
+  .option("--to <platform>", "target platform id, or 'all' -- skips the interactive picker when given with <skillName>")
   .action(linkCommand);
 
 program

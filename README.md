@@ -8,7 +8,7 @@ npm install -g skillfn
 
 ## `scan` — security gate
 
-**Required**: [NVIDIA SkillSpector](https://github.com/NVIDIA/SkillSpector) (Apache 2.0, runs fully offline, no API key). If it's not installed, `skillfn scan`/`publish`/`update`/`doctor` will interactively offer to install it for you the first time they need it (`uv tool install git+https://github.com/NVIDIA/skillspector.git` under the hood) — pass `--yes` to accept that offer non-interactively (e.g. in a script), or just install it yourself upfront:
+**Required**: [NVIDIA SkillSpector](https://github.com/NVIDIA/SkillSpector) (Apache 2.0, runs fully offline, no API key), and `uv` (a Python tool manager) to install it. If either is missing, `skillfn scan`/`publish`/`update`/`doctor` show an interactive menu — *install it for me* / *just show me the command* / *cancel* — the first time they need it. Pass `--yes` to accept "install it for me" non-interactively (e.g. in a script), or just install it yourself upfront:
 
 ```
 uv tool install git+https://github.com/NVIDIA/skillspector.git
@@ -51,7 +51,8 @@ skillfn audit
 Makes a skill installed for one platform available to another, since the base `SKILL.md` format is already shared across ~40 clients — no format conversion happens, this just symlinks it into the target platform's discovery path and warns about likely capability mismatches (e.g. a skill that looks like it needs network access, on a platform whose network policy isn't full/known).
 
 ```
-skillfn link my-skill --to openclaw
+skillfn link                              # interactive: pick the skill and target platform(s) with arrow keys
+skillfn link my-skill --to openclaw       # explicit, for scripts/AI agents
 skillfn link my-skill --to all
 ```
 

@@ -2,7 +2,16 @@
   "name": "skillfn",
   "version": "0.1.0",
   "description": "Security-scan, sign, and publish AI agent skills (SKILL.md) — wraps NVIDIA SkillSpector, tracks lineage, works with any SKILL.md-compatible agent.",
-  "keywords": ["skill", "skills", "agent-skills", "claude", "claude-code", "security", "sbom", "supply-chain"],
+  "keywords": [
+    "skill",
+    "skills",
+    "agent-skills",
+    "claude",
+    "claude-code",
+    "security",
+    "sbom",
+    "supply-chain"
+  ],
   "license": "Apache-2.0",
   "author": "Kusal Darshana <support@skillfn.com>",
   "homepage": "https://github.com/skillfn/cli#readme",
@@ -29,12 +38,13 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@clack/prompts": "^1.7.0",
     "commander": "^12.1.0",
     "yaml": "^2.5.0"
   },
   "devDependencies": {
-    "typescript": "^5.6.0",
     "@types/node": "^22.0.0",
-    "tsx": "^4.19.0"
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
   }
 }
