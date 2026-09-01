@@ -8,13 +8,15 @@ npm install -g skillfn
 
 ## `scan` — security gate
 
-Primary engine is [NVIDIA SkillSpector](https://github.com/NVIDIA/SkillSpector) (Apache 2.0, runs fully offline, no API key). Install it once:
+Primary engine is [NVIDIA SkillSpector](https://github.com/NVIDIA/SkillSpector) (Apache 2.0, runs fully offline, no API key). If it's not installed, `skillfn scan`/`publish`/`update`/`doctor` will interactively offer to install it for you the first time they need it (`uv tool install git+https://github.com/NVIDIA/skillspector.git` under the hood) — pass `--yes` to accept that offer non-interactively (e.g. in a script), or just install it yourself upfront:
 
 ```
 uv tool install git+https://github.com/NVIDIA/skillspector.git
 ```
 
-If it's not on PATH, `skillfn scan` automatically falls back to a built-in, zero-dependency pattern-based scanner covering a narrower rule set (dangerous shell patterns, credential-file exfiltration, unpinned insecure fetches, prompt-injection markers, concealment characters, and description/behavior mismatches) — real, but no substitute for SkillSpector's AST/taint analysis, so install SkillSpector for anything beyond a quick local check.
+This is a real interactive prompt, not something bundled into `npm install -g` itself — a postinstall script that silently fetches and runs another language's toolchain is exactly the kind of pattern this project's own scanner flags as risky in other people's skills, and it would also just silently do nothing for anyone who runs `npm install --ignore-scripts` (common in the security-conscious environments this tool is actually for).
+
+If SkillSpector isn't installed and you decline the offer, `skillfn scan` falls back to a built-in, zero-dependency pattern-based scanner covering a narrower rule set (dangerous shell patterns, credential-file exfiltration, unpinned insecure fetches, prompt-injection markers, concealment characters, and description/behavior mismatches) — real, but no substitute for SkillSpector's AST/taint analysis. `skillfn publish`/`update` will say so more insistently, since a "passed" scan on a published skill is meant to mean something.
 
 ```
 skillfn scan ./path/to/some-skill

@@ -2,10 +2,16 @@ import { patternScanner } from "../scanner/patternScanner.js";
 import { skillSpectorScanner, ScannerNotInstalledError } from "../scanner/skillSpectorScanner.js";
 import type { ScanResult } from "../scanner/types.js";
 import { toSarif } from "../sarif.js";
+import { offerToInstallSkillSpector, type InstallOfferContext } from "../skillSpectorInstall.js";
 
 const SEVERITY_ORDER = ["info", "low", "medium", "high", "critical"] as const;
 
-export async function runScan(path: string): Promise<ScanResult> {
+export interface RunScanOptions {
+  context?: InstallOfferContext;
+  autoYes?: boolean;
+}
+
+export async function runScan(path: string, options: RunScanOptions = {}): Promise<ScanResult> {
   try {
     return await skillSpectorScanner.scan(path);
   } catch (err) {
@@ -13,11 +19,17 @@ export async function runScan(path: string): Promise<ScanResult> {
       // Diagnostic, not data -- always stderr, so --format json/sarif output on stdout
       // stays clean and pipeable (e.g. straight into a GitHub Code Scanning upload step).
       console.error(
-        "NVIDIA SkillSpector is not installed (the primary v1 scan engine — see " +
-          "extra/plans/03-security-gate.md). Falling back to the built-in pattern scanner, " +
-          "which covers fewer categories.\n" +
-          "  Install it with: uv tool install git+https://github.com/NVIDIA/skillspector.git\n",
+        "NVIDIA SkillSpector is not installed (the primary v1 scan engine). " +
+          "Falling back to the built-in pattern scanner, which covers fewer categories.\n" +
+          "  Install it yourself anytime with: uv tool install git+https://github.com/NVIDIA/skillspector.git\n",
       );
+      const installed = await offerToInstallSkillSpector({
+        context: options.context ?? "scan",
+        autoYes: options.autoYes,
+      });
+      if (installed) {
+        return await skillSpectorScanner.scan(path); // retry now that it's actually there
+      }
       return patternScanner.scan(path);
     }
     throw err;
@@ -48,10 +60,11 @@ function printTerminal(path: string, result: ScanResult): void {
 
 interface ScanOptions {
   format?: "terminal" | "json" | "sarif";
+  yes?: boolean;
 }
 
 export async function scanCommand(path: string, options: ScanOptions): Promise<void> {
-  const result = await runScan(path);
+  const result = await runScan(path, { context: "scan", autoYes: options.yes });
   const format = options.format ?? "terminal";
 
   if (format === "json") {

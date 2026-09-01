@@ -111,6 +111,7 @@ interface PublishOptions {
   license?: string;
   originalSource?: string;
   originalAuthor?: string;
+  yes?: boolean;
 }
 
 export async function publishCommand(path: string, options: PublishOptions): Promise<void> {
@@ -122,7 +123,7 @@ export async function publishCommand(path: string, options: PublishOptions): Pro
     );
   }
 
-  const scanResult = await runScan(path);
+  const scanResult = await runScan(path, { context: "publish", autoYes: options.yes });
   if (!scanResult.passed) {
     console.log("\nPublish aborted: the security scan did not pass. Run 'skillfn scan' for details.");
     process.exitCode = 1;

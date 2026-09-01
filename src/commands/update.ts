@@ -8,7 +8,11 @@ import { collectFiles, readSkidMarker } from "./publish.js";
  * extra/plans/02-data-model.md's skill_versions-vs-lineage_edges correction: this is a
  * skill's own revision history, never a lineage/synthesis event.
  */
-export async function updateCommand(path: string): Promise<void> {
+interface UpdateOptions {
+  yes?: boolean;
+}
+
+export async function updateCommand(path: string, options: UpdateOptions = {}): Promise<void> {
   const skid = await readSkidMarker(path);
   if (!skid) {
     console.log(
@@ -19,7 +23,7 @@ export async function updateCommand(path: string): Promise<void> {
     return;
   }
 
-  const scanResult = await runScan(path);
+  const scanResult = await runScan(path, { context: "publish", autoYes: options.yes });
   if (!scanResult.passed) {
     console.log("\nUpdate aborted: the security scan did not pass. Run 'skillfn scan' for details.");
     process.exitCode = 1;

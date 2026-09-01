@@ -24,6 +24,7 @@ program
   .command("scan <path>")
   .description("Run the local security scanner against a skill directory (no network required).")
   .option("--format <format>", "terminal (default), json, or sarif (for GitHub Code Scanning / VS Code)", "terminal")
+  .option("--yes", "auto-accept the SkillSpector install offer if it's missing, non-interactively")
   .action(scanCommand);
 
 program
@@ -85,11 +86,13 @@ program
   .option("--license <spdxIdOrText>", "skip the interactive license prompt")
   .option("--original-source <url>", "skip the interactive originality prompt: this is based on existing work at <url>")
   .option("--original-author <handle>", "original author's handle, if known (used with --original-source)")
+  .option("--yes", "auto-accept the SkillSpector install offer if it's missing, non-interactively")
   .action(publishCommand);
 
 program
   .command("update <path>")
   .description("Scan, then publish a new version of an already-published skill (same SKID, new skill_versions row).")
+  .option("--yes", "auto-accept the SkillSpector install offer if it's missing, non-interactively")
   .action(updateCommand);
 
 program
@@ -100,6 +103,7 @@ program
 program
   .command("doctor")
   .description("Diagnose common problems: is skillspector installed, is your session valid, any broken 'link' symlinks.")
+  .option("--yes", "auto-accept the SkillSpector install offer if it's missing, non-interactively")
   .action(doctorCommand);
 
 program

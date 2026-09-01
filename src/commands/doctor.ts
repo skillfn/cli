@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadSession, HUB_URL } from "../session.js";
 import { PLATFORMS } from "../platforms.js";
+import { offerToInstallSkillSpector } from "../skillSpectorInstall.js";
 
 /**
  * `brew doctor`/`flutter doctor`-shaped diagnostics -- checks the things most likely to
@@ -59,14 +60,21 @@ async function findDanglingLinks(): Promise<string[]> {
   return dangling;
 }
 
-export async function doctorCommand(): Promise<void> {
+interface DoctorOptions {
+  yes?: boolean;
+}
+
+export async function doctorCommand(options: DoctorOptions = {}): Promise<void> {
   console.log("skillfn doctor\n");
 
-  await checkLine("skillspector on PATH", async () =>
+  const hasSkillSpector = await checkLine("skillspector on PATH", async () =>
     (await isSkillSpectorInstalled())
       ? undefined
       : "not found -- falls back to the weaker pattern scanner. Install: uv tool install git+https://github.com/NVIDIA/skillspector.git",
   );
+  if (!hasSkillSpector) {
+    await offerToInstallSkillSpector({ context: "doctor", autoYes: options.yes });
+  }
 
   await checkLine("hub session", async () => {
     const session = await loadSession();
