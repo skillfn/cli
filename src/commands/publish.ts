@@ -1,6 +1,6 @@
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { createInterface } from "node:readline/promises";
+import * as p from "@clack/prompts";
 import YAML from "yaml";
 import { runScan, SkillSpectorRequiredError } from "./scan.js";
 import { HUB_URL, postJsonWithReauth } from "../session.js";
@@ -53,30 +53,26 @@ export async function collectFiles(dir: string, base: string = dir): Promise<{ p
 }
 
 async function promptLicense(): Promise<{ licenseSpdxId?: string; licenseText?: string }> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    console.log("\nChoose a license:");
-    COMMON_LICENSES.forEach((l, i) => console.log(`  ${i + 1}. ${l}`));
-    const answer = (await rl.question(`Enter a number [1-${COMMON_LICENSES.length}]: `)).trim();
-    const index = Number(answer) - 1;
-    const choice = COMMON_LICENSES[index];
-
-    if (!choice) {
-      console.log("Invalid choice.");
-      process.exitCode = 1;
+  const choice = await p.select({
+    message: "Choose a license:",
+    options: COMMON_LICENSES.map((l) => ({ value: l, label: l })),
+  });
+  if (p.isCancel(choice)) {
+    p.cancel("Cancelled.");
+    return {};
+  }
+  if (choice === "Custom") {
+    const text = await p.text({ message: "Enter your custom license text:" });
+    if (p.isCancel(text)) {
+      p.cancel("Cancelled.");
       return {};
     }
-    if (choice === "Custom") {
-      const text = await rl.question("Enter your custom license text: ");
-      return { licenseText: text.trim() };
-    }
-    if (choice === "All rights reserved") {
-      return { licenseText: "All rights reserved." };
-    }
-    return { licenseSpdxId: choice };
-  } finally {
-    rl.close();
+    return { licenseText: text.trim() };
   }
+  if (choice === "All rights reserved") {
+    return { licenseText: "All rights reserved." };
+  }
+  return { licenseSpdxId: choice };
 }
 
 interface OriginalWorkDeclaration {
@@ -92,19 +88,30 @@ interface OriginalWorkDeclaration {
  * extra/plans/11-indexing-and-claims.md's attribution section for why "verify every claim"
  * isn't achievable and this attestation + later dispute/report flow is the honest answer.
  */
-async function promptOriginalWork(): Promise<OriginalWorkDeclaration> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = (await rl.question("\nIs this entirely your own original work? [Y/n]: ")).trim().toLowerCase();
-    if (answer === "" || answer === "y" || answer === "yes") {
-      return { isOriginalWork: true };
-    }
-    const sourceUrl = (await rl.question("Source URL for the original work (required): ")).trim();
-    const originalAuthorHandle = (await rl.question("Original author, if known (optional): ")).trim();
-    return { isOriginalWork: false, sourceUrl, originalAuthorHandle: originalAuthorHandle || undefined };
-  } finally {
-    rl.close();
+async function promptOriginalWork(): Promise<OriginalWorkDeclaration | undefined> {
+  const isOriginal = await p.confirm({ message: "Is this entirely your own original work?", initialValue: true });
+  if (p.isCancel(isOriginal)) {
+    p.cancel("Cancelled.");
+    return undefined;
   }
+  if (isOriginal) return { isOriginalWork: true };
+
+  const sourceUrl = await p.text({
+    message: "Source URL for the original work:",
+    validate: (value) => (value?.trim() ? undefined : "Required."),
+  });
+  if (p.isCancel(sourceUrl)) {
+    p.cancel("Cancelled.");
+    return undefined;
+  }
+
+  const originalAuthorHandle = await p.text({ message: "Original author, if known (optional):" });
+  if (p.isCancel(originalAuthorHandle)) {
+    p.cancel("Cancelled.");
+    return undefined;
+  }
+
+  return { isOriginalWork: false, sourceUrl: sourceUrl.trim(), originalAuthorHandle: originalAuthorHandle.trim() || undefined };
 }
 
 interface PublishOptions {
@@ -167,12 +174,19 @@ export async function publishCommand(path: string, options: PublishOptions): Pro
       : { licenseText: options.license };
   } else {
     license = await promptLicense();
-    if (!license.licenseSpdxId && !license.licenseText) return; // invalid choice already reported
+    if (!license.licenseSpdxId && !license.licenseText) {
+      process.exitCode = 1;
+      return; // cancelled/invalid choice already reported
+    }
   }
 
-  const originalWork: OriginalWorkDeclaration = options.originalSource
+  const originalWork: OriginalWorkDeclaration | undefined = options.originalSource
     ? { isOriginalWork: false, sourceUrl: options.originalSource, originalAuthorHandle: options.originalAuthor }
     : await promptOriginalWork();
+  if (!originalWork) {
+    process.exitCode = 1;
+    return; // cancelled, already reported
+  }
 
   const files = await collectFiles(path);
 

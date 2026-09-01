@@ -1,6 +1,6 @@
 import { watch as fsWatch, type FSWatcher } from "node:fs";
 import { stat } from "node:fs/promises";
-import { createInterface } from "node:readline/promises";
+import * as p from "@clack/prompts";
 import { homedir } from "node:os";
 import { PLATFORMS } from "../platforms.js";
 import { discoverAllSkills, type DiscoveredSkill } from "../skillDiscovery.js";
@@ -30,15 +30,18 @@ async function dirExists(path: string): Promise<boolean> {
 }
 
 async function promptYesNoNever(question: string): Promise<"yes" | "no" | "never"> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = (await rl.question(`${question} [y/N/never] `)).trim().toLowerCase();
-    if (answer === "never") return "never";
-    if (answer === "y" || answer === "yes") return "yes";
-    return "no";
-  } finally {
-    rl.close();
-  }
+  if (!process.stdin.isTTY) return "no"; // never hang a non-interactive/piped context
+  const answer = await p.select({
+    message: question,
+    options: [
+      { value: "yes", label: "Yes, publish it" },
+      { value: "no", label: "Not now" },
+      { value: "never", label: "Never ask about this skill again" },
+    ],
+    initialValue: "no",
+  });
+  if (p.isCancel(answer)) return "no";
+  return answer as "yes" | "no" | "never";
 }
 
 async function handleNewSkill(skill: DiscoveredSkill): Promise<void> {
@@ -52,10 +55,7 @@ async function handleNewSkill(skill: DiscoveredSkill): Promise<void> {
   );
 
   if (config.publishPrompts === "always") {
-    console.log(
-      "  publish-prompts=always, but hub publishing isn't wired up yet (needs Supabase — " +
-        "extra/plans/07-roadmap.md, Phase 2). Run 'skillfn publish' once it lands.",
-    );
+    console.log(`  publish-prompts=always -- run 'skillfn publish ${skill.dir}' to publish it.`);
     return;
   }
 
@@ -66,7 +66,7 @@ async function handleNewSkill(skill: DiscoveredSkill): Promise<void> {
     await muteSkill(skill.name);
     console.log(`  Won't ask about "${skill.name}" again (skillfn config unmute "${skill.name}" to undo).`);
   } else if (answer === "yes") {
-    console.log("  Hub publishing isn't wired up yet — run 'skillfn publish' once it lands.");
+    console.log(`  Run 'skillfn publish ${skill.dir}' to publish it.`);
   }
 }
 

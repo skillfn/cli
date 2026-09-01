@@ -1,12 +1,12 @@
 import { mkdir, writeFile, access } from "node:fs/promises";
 import { join } from "node:path";
-import { createInterface } from "node:readline/promises";
+import * as p from "@clack/prompts";
 
 /**
  * Scaffolds a scan-clean SKILL.md skeleton from a short prompt. Exists to remove a real
  * funnel-friction point: a first-time author's first encounter with `skillfn scan` was
  * previously a cold, empty directory with no guidance -- this gives them a correct
- * starting point instead (extra/plans/09-growth-funnel-and-business-model.md).
+ * starting point instead.
  */
 
 function toKebabCase(input: string): string {
@@ -18,52 +18,47 @@ function toKebabCase(input: string): string {
 }
 
 export async function initCommand(): Promise<void> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  p.intro("skillfn init");
+
+  const rawName = await p.text({
+    message: "Skill name:",
+    validate: (value) => (toKebabCase(value ?? "") ? undefined : "A name is required."),
+  });
+  if (p.isCancel(rawName)) return void p.cancel("Cancelled.");
+  const name = toKebabCase(rawName);
+
+  const description = await p.text({
+    message: "One-line description:",
+    validate: (value) => (value?.trim() ? undefined : "A description is required."),
+  });
+  if (p.isCancel(description)) return void p.cancel("Cancelled.");
+
+  const needsNetwork = await p.confirm({ message: "Does this skill need network access?", initialValue: false });
+  if (p.isCancel(needsNetwork)) return void p.cancel("Cancelled.");
+
+  const needsExec = await p.confirm({ message: "Does this skill run shell commands/scripts?", initialValue: false });
+  if (p.isCancel(needsExec)) return void p.cancel("Cancelled.");
+
+  const dir = join(process.cwd(), name);
   try {
-    const rawName = await rl.question("Skill name: ");
-    const name = toKebabCase(rawName);
-    if (!name) {
-      console.log("A name is required.");
-      process.exitCode = 1;
-      return;
-    }
+    await access(dir);
+    p.cancel(`"${dir}" already exists -- not overwriting.`);
+    process.exitCode = 1;
+    return;
+  } catch {
+    // doesn't exist yet, good
+  }
 
-    const description = (await rl.question("One-line description: ")).trim();
-    if (!description) {
-      console.log("A description is required.");
-      process.exitCode = 1;
-      return;
-    }
+  await mkdir(dir, { recursive: true });
 
-    const needsNetwork = (await rl.question("Does this skill need network access? [y/N]: "))
-      .trim()
-      .toLowerCase()
-      .startsWith("y");
-    const needsExec = (await rl.question("Does this skill run shell commands/scripts? [y/N]: "))
-      .trim()
-      .toLowerCase()
-      .startsWith("y");
+  const capabilityLine =
+    needsNetwork || needsExec
+      ? `\nThis skill ${[needsNetwork && "makes network requests", needsExec && "runs shell commands"].filter(Boolean).join(" and ")}.\n`
+      : "";
 
-    const dir = join(process.cwd(), name);
-    try {
-      await access(dir);
-      console.log(`\n"${dir}" already exists -- not overwriting.`);
-      process.exitCode = 1;
-      return;
-    } catch {
-      // doesn't exist yet, good
-    }
-
-    await mkdir(dir, { recursive: true });
-
-    const capabilityLine =
-      needsNetwork || needsExec
-        ? `\nThis skill ${[needsNetwork && "makes network requests", needsExec && "runs shell commands"].filter(Boolean).join(" and ")}.\n`
-        : "";
-
-    const skillMd = `---
+  const skillMd = `---
 name: ${name}
-description: ${description}
+description: ${description.trim()}
 ---
 
 # ${rawName.trim()}
@@ -73,11 +68,7 @@ ${capabilityLine}
 <!-- Describe, step by step, what the agent should do when this skill is triggered. -->
 `;
 
-    await writeFile(join(dir, "SKILL.md"), skillMd, "utf8");
+  await writeFile(join(dir, "SKILL.md"), skillMd, "utf8");
 
-    console.log(`\nCreated ${join(dir, "SKILL.md")}.`);
-    console.log(`Next: edit it, then run 'skillfn scan ${name}' before publishing.\n`);
-  } finally {
-    rl.close();
-  }
+  p.outro(`Created ${join(dir, "SKILL.md")}. Next: edit it, then run 'skillfn scan ${name}' before publishing.`);
 }
