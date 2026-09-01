@@ -3,8 +3,11 @@ import type { Finding, ScanResult, Severity } from "./scanner/types.js";
 /**
  * Minimal SARIF 2.1.0 serialization -- lets `skillfn scan --format sarif` output plug
  * directly into GitHub Code Scanning (PR annotations) and VS Code's Problems panel with
- * zero extra work on either end. NVIDIA SkillSpector already supports `--format sarif`
- * natively; this covers the `patternScanner` fallback path, which doesn't.
+ * zero extra work on either end. We always invoke SkillSpector with `--format json` (see
+ * scanner/skillSpectorScanner.ts) and convert to our own `Finding[]` shape first, so this
+ * serializer covers that normalized shape regardless of which engine produced it -- not a
+ * fallback-only path (the actual fallback, `patternScanner`, was removed 2026-09-01, see
+ * extra/plans/03-security-gate.md).
  */
 
 function severityToSarifLevel(severity: Severity): "error" | "warning" | "note" {

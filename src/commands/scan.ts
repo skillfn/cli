@@ -1,4 +1,3 @@
-import { patternScanner } from "../scanner/patternScanner.js";
 import { skillSpectorScanner, ScannerNotInstalledError } from "../scanner/skillSpectorScanner.js";
 import type { ScanResult } from "../scanner/types.js";
 import { toSarif } from "../sarif.js";
@@ -11,6 +10,15 @@ export interface RunScanOptions {
   autoYes?: boolean;
 }
 
+/**
+ * SkillSpector is a hard requirement, not a nice-to-have with a fallback -- see
+ * extra/plans/03-security-gate.md's 2026-09-01 correction. The removed `patternScanner`
+ * was a strict, shallow subset of SkillSpector's 71-pattern/17-category coverage (confirmed
+ * by direct comparison, not assumed) with zero unique value; presenting its weaker result
+ * under the same "PASS" branding was a real quality-signaling problem for a trust product.
+ */
+export class SkillSpectorRequiredError extends Error {}
+
 export async function runScan(path: string, options: RunScanOptions = {}): Promise<ScanResult> {
   try {
     return await skillSpectorScanner.scan(path);
@@ -18,11 +26,7 @@ export async function runScan(path: string, options: RunScanOptions = {}): Promi
     if (err instanceof ScannerNotInstalledError) {
       // Diagnostic, not data -- always stderr, so --format json/sarif output on stdout
       // stays clean and pipeable (e.g. straight into a GitHub Code Scanning upload step).
-      console.error(
-        "NVIDIA SkillSpector is not installed (the primary v1 scan engine). " +
-          "Falling back to the built-in pattern scanner, which covers fewer categories.\n" +
-          "  Install it yourself anytime with: uv tool install git+https://github.com/NVIDIA/skillspector.git\n",
-      );
+      console.error("NVIDIA SkillSpector is required and isn't installed.\n");
       const installed = await offerToInstallSkillSpector({
         context: options.context ?? "scan",
         autoYes: options.autoYes,
@@ -30,7 +34,11 @@ export async function runScan(path: string, options: RunScanOptions = {}): Promi
       if (installed) {
         return await skillSpectorScanner.scan(path); // retry now that it's actually there
       }
-      return patternScanner.scan(path);
+      throw new SkillSpectorRequiredError(
+        "Skillfn requires SkillSpector to run a security scan -- there is no weaker fallback. Install it with:\n" +
+          "  uv tool install git+https://github.com/NVIDIA/skillspector.git\n" +
+          "Then try again.",
+      );
     }
     throw err;
   }
@@ -64,7 +72,17 @@ interface ScanOptions {
 }
 
 export async function scanCommand(path: string, options: ScanOptions): Promise<void> {
-  const result = await runScan(path, { context: "scan", autoYes: options.yes });
+  let result: ScanResult;
+  try {
+    result = await runScan(path, { context: "scan", autoYes: options.yes });
+  } catch (err) {
+    if (err instanceof SkillSpectorRequiredError) {
+      console.error(`\n${err.message}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
+  }
   const format = options.format ?? "terminal";
 
   if (format === "json") {

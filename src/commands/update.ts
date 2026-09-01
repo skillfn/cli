@@ -1,4 +1,4 @@
-import { runScan } from "./scan.js";
+import { runScan, SkillSpectorRequiredError } from "./scan.js";
 import { HUB_URL, postJsonWithReauth } from "../session.js";
 import { collectFiles, readSkidMarker } from "./publish.js";
 
@@ -23,7 +23,17 @@ export async function updateCommand(path: string, options: UpdateOptions = {}): 
     return;
   }
 
-  const scanResult = await runScan(path, { context: "publish", autoYes: options.yes });
+  let scanResult;
+  try {
+    scanResult = await runScan(path, { context: "publish", autoYes: options.yes });
+  } catch (err) {
+    if (err instanceof SkillSpectorRequiredError) {
+      console.log(`\nUpdate aborted: ${err.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
+  }
   if (!scanResult.passed) {
     console.log("\nUpdate aborted: the security scan did not pass. Run 'skillfn scan' for details.");
     process.exitCode = 1;
