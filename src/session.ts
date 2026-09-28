@@ -8,9 +8,8 @@ import { spawn } from "node:child_process";
 const SESSION_DIR = join(homedir(), ".skillfn");
 const SESSION_PATH = join(SESSION_DIR, "session.json");
 
-// skillfn.dev is NOT owned/live -- the plan is a .com (this becomes a social-network-like
-// product, see extra/plans/00-MASTERPLAN.md), not yet purchased. Real, currently-live
-// default is the Vercel-assigned alias until a real domain exists and DNS is pointed.
+// skillfn.dev is NOT owned/live -- a real domain hasn't been purchased yet. Real,
+// currently-live default is the Vercel-assigned alias until DNS is pointed at one.
 export const HUB_URL = process.env.SKILLFN_HUB_URL ?? "https://skillfn.vercel.app";
 
 export interface Session {
@@ -45,13 +44,11 @@ function openBrowser(url: string): void {
 
 /**
  * Browser device-flow login, same shape as `gh auth login` / `vercel login` -- chosen
- * explicitly over a copy-paste token for lowest funnel friction (see
- * extra/plans/09-growth-funnel-and-business-model.md and the Phase 2 planning discussion):
- * a first-time publisher never runs a separate login command, `publish` triggers this
- * inline and continues straight through once it completes.
+ * explicitly over a copy-paste token for lowest funnel friction: a first-time publisher
+ * never runs a separate login command, `publish` triggers this inline and continues
+ * straight through once it completes.
  *
- * No token refresh in v1 (extra/plans/07-roadmap.md Phase 2 notes) -- an expired token
- * just re-triggers this flow.
+ * No token refresh in v1 -- an expired token just re-triggers this flow.
  */
 export async function login(): Promise<Session> {
   const state = randomBytes(16).toString("hex");

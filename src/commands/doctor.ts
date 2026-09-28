@@ -8,8 +8,7 @@ import { offerToInstallSkillSpector } from "../skillSpectorInstall.js";
 
 /**
  * `brew doctor`/`flutter doctor`-shaped diagnostics -- checks the things most likely to
- * cause a confusing failure before the user hits one, per the DX suggestions discussed
- * in this session (extra/plans/09-growth-funnel-and-business-model.md).
+ * cause a confusing failure before the user hits one.
  */
 
 async function checkLine(label: string, check: () => Promise<string | undefined>): Promise<boolean> {

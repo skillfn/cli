@@ -10,16 +10,15 @@ export interface PlatformInfo {
   globalDir?: (home: string) => string;
   projectDir: (cwd: string) => string;
   /**
-   * Confirmed network-access posture, only where independently verified — see
-   * extra/plans/08-cross-platform-capabilities.md. `undefined` means "not verified,
-   * check manually before relying on it," never a guess.
+   * Confirmed network-access posture, only where independently verified.
+   * `undefined` means "not verified, check manually before relying on it," never a guess.
    */
   networkPosture?: NetworkPosture;
 }
 
 /**
  * Only platforms whose skill-discovery directory convention was independently
- * confirmed against a primary source are listed here (extra/plans/08-cross-platform-capabilities.md).
+ * confirmed against a primary source are listed here.
  *
  * Codex CLI and Antigravity both confirmed (primary docs, not secondary sources) to use
  * `.agents/skills` for project-local discovery — the same directory. That means linking

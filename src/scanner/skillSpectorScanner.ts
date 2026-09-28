@@ -13,10 +13,9 @@ import {
 
 /**
  * Wraps NVIDIA SkillSpector (github.com/NVIDIA/SkillSpector, Apache 2.0) — the primary
- * v1 security gate. See extra/plans/03-security-gate.md for why this is the right engine
- * (verified firsthand: Claude Code support, real offline mode, 69-pattern/17-category
- * ruleset) rather than Cisco's skill-scanner (an earlier, corrected guess) or Snyk's
- * agent-scan (requires an account/token, disqualified).
+ * v1 security gate, chosen for verified-firsthand Claude Code support, a real offline
+ * mode, and a 69-pattern/17-category ruleset, over Cisco's skill-scanner (an earlier,
+ * corrected guess) or Snyk's agent-scan (requires an account/token, disqualified).
  *
  * Requires `skillspector` on PATH: `uv tool install git+https://github.com/NVIDIA/skillspector.git`.
  * Runs with --no-llm so it never needs an API key and never phones out for LLM-assisted analysis.

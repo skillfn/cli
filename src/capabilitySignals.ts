@@ -4,9 +4,8 @@ import { join } from "node:path";
 /**
  * A lightweight, local, no-network heuristic for "does this skill likely need network
  * access or shell execution" — used to warn before mirroring a skill onto a platform
- * with a different capability posture (extra/plans/08-cross-platform-capabilities.md).
- * This is deliberately narrower than the full security scan (extra/plans/03-security-gate.md)
- * — it's a capability signal, not a safety verdict.
+ * with a different capability posture. This is deliberately narrower than the full
+ * security scan — it's a capability signal, not a safety verdict.
  */
 export interface CapabilitySignals {
   likelyNetwork: boolean;

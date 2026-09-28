@@ -84,9 +84,8 @@ interface OriginalWorkDeclaration {
 /**
  * Required at publish time, independent of any indexing/crawler feature -- this is about
  * attribution for THIS publish, not "Google for Skills." Real gap found by a human retest
- * (2026-08-20): this was designed but never actually asked. See
- * extra/plans/11-indexing-and-claims.md's attribution section for why "verify every claim"
- * isn't achievable and this attestation + later dispute/report flow is the honest answer.
+ * (2026-08-20): this was designed but never actually asked. An attestation now, plus a
+ * later dispute/report flow, is the honest answer since "verify every claim" isn't achievable.
  */
 async function promptOriginalWork(): Promise<OriginalWorkDeclaration | undefined> {
   const isOriginal = await p.confirm({ message: "Is this entirely your own original work?", initialValue: true });

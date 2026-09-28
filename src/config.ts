@@ -3,10 +3,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
- * Local, plaintext config — no telemetry, nothing sent anywhere. Governs the publish
- * nudge described in extra/plans/09-growth-funnel-and-business-model.md: a global
- * default plus a per-skill override, the same two-tier shape as browser cookie consent
- * or an OS permission dialog ("Allow / Allow Always / Don't Ask Again").
+ * Local, plaintext config — no telemetry, nothing sent anywhere. Governs the `watch`
+ * publish nudge: a global default plus a per-skill override, the same two-tier shape as
+ * browser cookie consent or an OS permission dialog ("Allow / Allow Always / Don't Ask Again").
  */
 export type PublishPrompts = "always" | "ask" | "never";
 

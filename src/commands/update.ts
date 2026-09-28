@@ -4,9 +4,8 @@ import { collectFiles, readSkidMarker } from "./publish.js";
 
 /**
  * Adds a new version under an EXISTING skid (POST /api/skills/<skid>/versions) --
- * distinct from `publish`, which always mints a brand-new skid. See
- * extra/plans/02-data-model.md's skill_versions-vs-lineage_edges correction: this is a
- * skill's own revision history, never a lineage/synthesis event.
+ * distinct from `publish`, which always mints a brand-new skid. This is a skill's own
+ * revision history, never a lineage/synthesis event.
  */
 interface UpdateOptions {
   yes?: boolean;

@@ -7,10 +7,9 @@ import { discoverAllSkills, type DiscoveredSkill } from "../skillDiscovery.js";
 import { loadConfig, muteSkill, isSkillMuted } from "../config.js";
 
 /**
- * Explicit, opt-in, foreground watcher — never a silently-installed background daemon
- * (extra/plans/09-growth-funnel-and-business-model.md explains why that distinction
- * matters for trust). Run it yourself, or wire it into your own cron/systemd unit if
- * you want it always-on; skillfn will never install one for you.
+ * Explicit, opt-in, foreground watcher — never a silently-installed background daemon.
+ * Run it yourself, or wire it into your own cron/systemd unit if you want it
+ * always-on; skillfn will never install one for you.
  *
  * Detects newly-appeared local skills and, governed by `skillfn config`'s
  * publish-prompts setting, nudges toward publishing — never blocking or degrading any

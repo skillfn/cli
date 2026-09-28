@@ -6,8 +6,7 @@ export interface Finding {
   message: string;
   file: string;
   line?: number;
-  /** Mapping to a public taxonomy (OWASP Agentic AI Top 10 / MITRE ATLAS), filled in as rules mature.
-   * See extra/plans/03-security-gate.md. */
+  /** Mapping to a public taxonomy (OWASP Agentic AI Top 10 / MITRE ATLAS), filled in as rules mature. */
   taxonomy?: string;
 }
 
@@ -37,7 +36,7 @@ export const SEVERITY_WEIGHT: Record<Severity, number> = {
   critical: 15,
 };
 
-/** A skill fails the gate if any finding is high/critical — see extra/plans/03-security-gate.md. */
+/** A skill fails the gate if any finding is high/critical. */
 export function decidePass(findings: Finding[]): boolean {
   return !findings.some((f) => f.severity === "high" || f.severity === "critical");
 }
