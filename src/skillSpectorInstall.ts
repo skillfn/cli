@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as p from "@clack/prompts";
+import { heading, success, failure } from "./ui.js";
 
 /**
  * Interactive install offer for `uv` + NVIDIA SkillSpector, both required. Deliberately NOT
@@ -55,19 +56,17 @@ async function resolveUvCommand(): Promise<string | undefined> {
 }
 
 /**
- * Captures stdout/stderr instead of inheriting them -- `uv`'s own install output (its
- * progress bars, "Resolved N packages", "Downloading numpy", etc.) has its own unthemed
- * look that clashed with skillfn's own styled terminal output. Kept (not discarded) so a
- * real failure can still show the underlying tool's own error instead of hiding it.
+ * `uv`'s own install output (progress bars, "Resolved N packages", "Downloading numpy",
+ * etc.) is actually decent on its own -- real user feedback was to keep it, not replace it
+ * with a competing skillfn spinner (the two fight over the same terminal line). So this
+ * inherits stdio and lets it print natively; runWithSpinner below bookends it with a
+ * skillfn-branded line before and after instead of hijacking the middle.
  */
-function runCommand(cmd: string, args: string[]): Promise<{ ok: boolean; output: string }> {
+function runCommand(cmd: string, args: string[]): Promise<boolean> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
-    let output = "";
-    child.stdout?.on("data", (chunk) => (output += chunk.toString()));
-    child.stderr?.on("data", (chunk) => (output += chunk.toString()));
-    child.on("error", () => resolve({ ok: false, output }));
-    child.on("close", (code) => resolve({ ok: code === 0, output }));
+    const child = spawn(cmd, args, { stdio: "inherit" });
+    child.on("error", () => resolve(false));
+    child.on("close", (code) => resolve(code === 0));
   });
 }
 
@@ -93,13 +92,9 @@ export async function manualInstallInstructions(): Promise<string> {
 }
 
 async function runWithSpinner(label: string, cmd: string, args: string[]): Promise<boolean> {
-  const s = p.spinner({ indicator: "timer" });
-  s.start(`Installing ${label}`);
-  const { ok, output } = await runCommand(cmd, args);
-  s.stop(ok ? `${label} installed.` : `${label} install failed.`);
-  if (!ok && output.trim()) {
-    console.error(output.trim());
-  }
+  console.log(heading(`→ Installing ${label}`));
+  const ok = await runCommand(cmd, args);
+  console.log(ok ? success(`${label} installed.`) : failure(`${label} install failed -- see output above.`));
   return ok;
 }
 

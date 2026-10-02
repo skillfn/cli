@@ -23,8 +23,12 @@ program
   .version(await getInstalledVersion());
 
 program
-  .command("scan <path>")
-  .description("Run the local security scanner against a skill directory (no network required).")
+  .command("scan [path]")
+  .description(
+    "Run the local security scanner. A single skill directory (with its own SKILL.md) scans " +
+      "directly; a container folder scans every skill found under it individually and reports " +
+      "them grouped by skill. Omit <path> for an interactive picker (no network required).",
+  )
   .option("--format <format>", "terminal (default), json, or sarif (for GitHub Code Scanning / VS Code)", "terminal")
   .option("--yes", "auto-accept the SkillSpector install offer if it's missing, non-interactively")
   .option("--full", "show every finding in detail, not just critical/high (terminal format only; json/sarif are always complete)")

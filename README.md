@@ -17,13 +17,17 @@ uv tool install git+https://github.com/NVIDIA/skillspector.git
 `scan`/`publish`/`update` require it — declining the offer or running non-interactively means they exit without producing a result rather than proceeding some other way.
 
 ```
-skillfn scan ./path/to/some-skill
-skillfn scan ./path/to/some-skill --format sarif   # for GitHub Code Scanning / VS Code
+skillfn scan ./path/to/some-skill                   # one skill (has its own SKILL.md)
+skillfn scan ./path/to/a/project                     # a container folder: finds every skill under it,
+                                                      # scans each individually, reports them grouped by skill
+skillfn scan                                         # no path: interactive picker (everywhere skillfn
+                                                      # knows about / a path you type / pick installed skills)
+skillfn scan ./path/to/some-skill --format sarif     # for GitHub Code Scanning / VS Code
 skillfn scan ./path/to/some-skill --format json
-skillfn scan ./path/to/some-skill --full            # terminal output: show every finding, not just critical/high
+skillfn scan ./path/to/some-skill --full             # terminal output: show every finding, not just critical/high
 ```
 
-Terminal output shows every CRITICAL/HIGH finding in full but collapses MEDIUM/LOW/INFO to a count by default — scanning a large tree can return hundreds of low-signal findings that would otherwise push the ones that actually need a look off the top of your scrollback. `--full` (or `--format json`/`--format sarif`, which are always complete) shows everything.
+Terminal output is grouped by skill (name, description, which directories it was found in, a risk breakdown, then its risks grouped by severity) — the same shape whether you scanned one skill or a hundred. Every CRITICAL/HIGH finding shows in full; MEDIUM/LOW/INFO collapse to a count by default, since scanning a large tree can return hundreds of low-signal findings that would otherwise push the ones that actually need a look off the top of your scrollback. `--full` (or `--format json`, which is always complete) shows everything. Scanning several skills runs them in parallel with a live per-skill progress line for each; afterward you can generate a Markdown report with real collapsible (`<details>`) sections per severity group, viewable in GitHub or VS Code's preview. (`--format sarif` only applies to a single skill directory for now.)
 
 ## `init` — scaffold a new skill
 
