@@ -143,6 +143,7 @@ function extractCompleteness(raw: unknown): AnalysisCompleteness | undefined {
     fullyInspectedFiles: typeof c.fully_inspected_files === "number" ? c.fully_inspected_files : 0,
     partiallyInspectedFiles: typeof c.partially_inspected_files === "number" ? c.partially_inspected_files : 0,
     entirelyUninspectedFiles: typeof c.entirely_uninspected_files === "number" ? c.entirely_uninspected_files : 0,
+    limitations: Array.isArray(c.limitations) ? c.limitations.filter((l): l is string => typeof l === "string") : [],
   };
 }
 

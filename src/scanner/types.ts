@@ -38,6 +38,16 @@ export interface AnalysisCompleteness {
   fullyInspectedFiles: number;
   partiallyInspectedFiles: number;
   entirelyUninspectedFiles: number;
+  /**
+   * SkillSpector's own human-readable explanation(s) for why it isn't complete -- e.g.
+   * "Analyzer static_patterns_supply_chain status: degraded." when its dependency
+   * vulnerability lookup (api.osv.dev) couldn't be reached. Confirmed real case: 100%
+   * coveragePercent (every file fully read) with isComplete still false, purely because
+   * that one external network call failed -- a content-truncation message like "some
+   * content wasn't inspected" would be factually wrong there. Surfacing this verbatim
+   * instead of guessing a cause (and a generic fix) from coveragePercent alone.
+   */
+  limitations: string[];
 }
 
 export interface ScanResult {

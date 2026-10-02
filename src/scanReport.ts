@@ -14,14 +14,25 @@ const MAX_LOCATIONS_DISPLAYED = 3;
  * Box-drawing tree connectors -- reddit-style nested replies, applied to a skill's findings:
  * skill -> severity group -> risk -> (location / remediation) each get their own thread
  * instead of being crammed into one run-on line. `prefix` is the accumulated indentation
- * from every ancestor branch; `isLast` decides this line's own connector (├─/└─) and the
+ * from every ancestor branch; `isLast` decides this line's own connector (├─/╰─) and the
  * prefix its own children inherit (│  to keep the sibling's line alive below, or three
  * spaces once there's nothing left to connect to).
+ *
+ * The closing corner (╰) is the rounded glyph, not the sharp one (└) -- the same one
+ * @clack/prompts itself already uses for its own box/note corners (S_CORNER_BOTTOM_LEFT),
+ * just not in the plain intro/outro bars you see around a `skillfn scan` session. Matching
+ * it keeps the tree visually part of the same tool instead of looking like a second style
+ * bolted on.
  */
 const BRANCH = "├─ ";
-const LAST_BRANCH = "└─ ";
+const LAST_BRANCH = "╰─ ";
 const PIPE = "│  ";
 const GAP = "   ";
+
+/** Marks each skill's own heading line -- @clack/prompts' own "confirmed step" glyph
+ * (S_STEP_ACTIVE), reused here rather than a plain bullet so a skill reads as a distinct
+ * top-level item in the same visual language the rest of the CLI's prompts already use. */
+const SKILL_ICON = "◆";
 
 function treeLine(prefix: string, isLast: boolean, text: string): string {
   return `${prefix}${isLast ? LAST_BRANCH : BRANCH}${text}`;
@@ -40,6 +51,26 @@ function formatBreakdown(counts: Partial<Record<Severity, number>>): string {
 function formatElapsed(ms: number): string {
   const s = Math.round(ms / 1000);
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+/**
+ * Builds the incompleteness explanation from what SkillSpector actually said, instead of
+ * guessing a cause (and a one-size-fits-all fix). Confirmed real case: a scan can come back
+ * with LOW coveragePercent purely because one external network call (its dependency-
+ * vulnerability lookup against api.osv.dev) was blocked/failed -- nothing to do with size or
+ * time, so coveragePercent alone can't distinguish the two causes. scanLimitations (the
+ * AE1-style "referenced artifact not completely inspected" findings) is the reliable signal
+ * instead: those only ever arise from genuine content/size truncation, never from an
+ * analyzer-level network failure, so the timeout suggestion is keyed on that, not on coverage.
+ */
+function incompleteSummary(skill: AggregatedSkill): string {
+  const pct = skill.coveragePercent !== undefined ? ` (${skill.coveragePercent.toFixed(0)}% coverage)` : "";
+  const reason = skill.incompleteReasons.length > 0 ? skill.incompleteReasons.join("; ") : "some content wasn't inspected";
+  const seeBelow = skill.scanLimitations.length > 0 ? ` See "scan limitations" below.` : "";
+  const suggestion = skill.scanLimitations.length > 0
+    ? " Try SKILLSPECTOR_MAX_WORKFLOW_SECONDS=3600 (seconds) if this is a large skill."
+    : "";
+  return `Scan did not fully complete${pct} -- ${reason}.${seeBelow}${suggestion}`;
 }
 
 function formatRiskTree(risks: UniqueRisk[], full: boolean, prefix: string): string[] {
@@ -79,15 +110,9 @@ function formatRiskTree(risks: UniqueRisk[], full: boolean, prefix: string): str
 /** One skill's block, as lines -- shared by the static full-report printer and live
  * per-skill streaming (aggregateScan.ts's onSkillReady), so both render identically. */
 export function formatSkillBlock(skill: AggregatedSkill, options: { full?: boolean } = {}): string {
-  const lines: string[] = [heading(skill.name)];
+  const lines: string[] = [heading(`${SKILL_ICON} ${skill.name}`)];
   if (skill.incomplete) {
-    const pct = skill.coveragePercent !== undefined ? ` (${skill.coveragePercent.toFixed(0)}% coverage)` : "";
-    lines.push(
-      warn(
-        `Scan did not fully complete${pct} -- some content wasn't inspected. See "scan limitations" below. ` +
-          `Try SKILLSPECTOR_MAX_WORKFLOW_SECONDS=3600 if this is a large skill.`,
-      ),
-    );
+    lines.push(warn(incompleteSummary(skill)));
   }
 
   const topLevel: Array<{ text: string; children?: (prefix: string) => string[] }> = [];
@@ -182,12 +207,7 @@ export function buildMarkdownReport(report: AggregateReport): string {
   for (const skill of report.skills) {
     lines.push(`## ${escapeMd(skill.name)}`, "");
     if (skill.incomplete) {
-      const pct = skill.coveragePercent !== undefined ? ` (${skill.coveragePercent.toFixed(0)}% coverage)` : "";
-      lines.push(
-        `> ⚠️ **Scan did not fully complete${pct}** -- some content wasn't inspected. See "Scan limitations" below. ` +
-          `Try \`SKILLSPECTOR_MAX_WORKFLOW_SECONDS=3600\` if this is a large skill.`,
-        "",
-      );
+      lines.push(`> ⚠️ ${escapeMd(incompleteSummary(skill))}`, "");
     }
     if (skill.description) lines.push(`${escapeMd(skill.description)}`, "");
     lines.push(`**Used in ${skill.instances.length} instance(s):**`);

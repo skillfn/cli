@@ -34,6 +34,10 @@ export interface AggregatedSkill {
    * (lowest) across instances; undefined when no scanner reported completeness at all. */
   incomplete: boolean;
   coveragePercent?: number;
+  /** SkillSpector's own stated reason(s) across every instance, deduped -- shown verbatim
+   * instead of a guessed, possibly-wrong generic explanation (coveragePercent alone can't
+   * tell "a file was too big to read" apart from "an external network call failed"). */
+  incompleteReasons: string[];
 }
 
 export interface AggregateReport {
@@ -101,6 +105,7 @@ export function buildAggregatedSkill(
     scanLimitations: dedupeIntoRisks(limitationFindings),
     incomplete: known.some((c) => !c.isComplete),
     coveragePercent: known.length > 0 ? Math.min(...known.map((c) => c.coveragePercent)) : undefined,
+    incompleteReasons: [...new Set(known.flatMap((c) => c.limitations))],
   };
 }
 
