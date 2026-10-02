@@ -4,6 +4,7 @@ import type { Severity } from "./scanner/types.js";
 import type { AggregateReport, AggregatedSkill, UniqueRisk } from "./aggregateScan.js";
 import type { BrokenReason, BrokenReference, ReferenceKind } from "./brokenReferences.js";
 import { heading, dim, warn, colorSeverity } from "./ui.js";
+import { BASELINE_FILENAME } from "./suppression.js";
 
 const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
 const ALWAYS_DETAILED: ReadonlySet<Severity> = new Set(["critical", "high"]);
@@ -206,6 +207,16 @@ export function formatSkillBlock(skill: AggregatedSkill, options: { full?: boole
     });
   }
 
+  if (skill.suppressedCount > 0) {
+    // Same reasoning as scan limitations: a reviewed baseline already excluded these from
+    // every count above -- shown as a count only (not expanded) so a suppressed finding
+    // doesn't just silently vanish with no trace that it ever existed, but also doesn't
+    // clutter the report with findings someone already reviewed and accepted.
+    topLevel.push({
+      text: dim(`${skill.suppressedCount} suppressed finding(s) -- reviewed and accepted, see ${BASELINE_FILENAME}`),
+    });
+  }
+
   const refCheck = skill.referenceCheck;
   if (refCheck && refCheck.broken.length > 0) {
     // Same demotion as scan limitations above: hygiene, not risk, so it's dim, labeled as
@@ -339,6 +350,13 @@ export function buildMarkdownReport(report: AggregateReport): string {
         for (const loc of r.locations) lines.push(`  - \`${loc}\``);
       }
       lines.push("", `</details>`, "");
+    }
+
+    if (skill.suppressedCount > 0) {
+      lines.push(
+        `**Suppressed:** ${skill.suppressedCount} finding(s) reviewed and accepted -- see \`${BASELINE_FILENAME}\` in the skill's own directory.`,
+        "",
+      );
     }
 
     const refCheck = skill.referenceCheck;

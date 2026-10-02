@@ -46,6 +46,11 @@ export interface AggregatedSkill {
    * this is only non-empty for the ones left as-is (declined, non-interactive, or the
    * rename itself failed). */
   nonCanonicalManifests: string[];
+  /** Sum of each instance's suppressedCount -- findings a reviewed baseline (see
+   * suppression.ts) already excluded from uniqueRisks/severityCounts/totalFindings, kept
+   * here only so a report can say "N reviewed finding(s) not shown" instead of silently
+   * making it look like they were never found. Never affects the risk score or pass/fail. */
+  suppressedCount: number;
   /** Dangling local references (and, if asked, dead URLs) in the skill's markdown. Absent
    * when the check wasn't run -- distinct from present-with-nothing-broken, so a reader can
    * tell "not checked" from "checked, all fine". Kept apart from severityCounts/
@@ -118,6 +123,7 @@ export function buildAggregatedSkill(
   completenessList: Array<AnalysisCompleteness | undefined> = [],
   nonCanonicalManifests: string[] = [],
   referenceCheck?: AggregatedReferenceCheck,
+  suppressedCounts: number[] = [],
 ): AggregatedSkill {
   const realFindings = findings.filter((f) => !f.finding.isCoverageLimitation);
   const limitationFindings = findings.filter((f) => f.finding.isCoverageLimitation);
@@ -141,6 +147,7 @@ export function buildAggregatedSkill(
     coveragePercent: known.length > 0 ? Math.min(...known.map((c) => c.coveragePercent)) : undefined,
     incompleteReasons: [...new Set(known.flatMap((c) => c.limitations))],
     nonCanonicalManifests,
+    suppressedCount: suppressedCounts.reduce((sum, n) => sum + n, 0),
     referenceCheck,
   };
 }
@@ -201,6 +208,7 @@ export async function runAggregateScan(skills: FoundSkill[], options: RunAggrega
       completeness: Array<AnalysisCompleteness | undefined>;
       nonCanonicalManifests: string[];
       referenceResults: ReferenceCheckResult[];
+      suppressedCounts: number[];
       remaining: number;
     }
   >();
@@ -212,6 +220,7 @@ export async function runAggregateScan(skills: FoundSkill[], options: RunAggrega
       completeness: [],
       nonCanonicalManifests: [],
       referenceResults: [],
+      suppressedCounts: [],
       remaining: 0,
     };
     if (skill.manifestFilename !== CANONICAL_SKILL_MD) {
@@ -242,6 +251,7 @@ export async function runAggregateScan(skills: FoundSkill[], options: RunAggrega
       const result = await skillSpectorScanner.scan(skill.dir);
       entry.instances.push(skill.dir);
       entry.completeness.push(result.completeness);
+      entry.suppressedCounts.push(result.suppressedCount ?? 0);
       for (const finding of result.findings) entry.findings.push({ finding, dir: skill.dir });
     } catch {
       ok = false;
@@ -258,6 +268,7 @@ export async function runAggregateScan(skills: FoundSkill[], options: RunAggrega
           entry.completeness,
           entry.nonCanonicalManifests,
           referenceChecks ? mergeReferenceChecks(referenceChecks, entry.referenceResults) : undefined,
+          entry.suppressedCounts,
         );
         ready.push(built);
         const text = options.onSkillReady?.(built);

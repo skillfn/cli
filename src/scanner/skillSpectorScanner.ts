@@ -13,6 +13,7 @@ import {
 } from "./types.js";
 import { EXCLUDED_DIR_NAMES } from "../skillExclusions.js";
 import { findVendoredSubtreesUnder } from "../skillTreeDiscovery.js";
+import { baselineExists, baselinePathFor } from "../suppression.js";
 
 /**
  * Wraps NVIDIA SkillSpector (github.com/NVIDIA/SkillSpector, Apache 2.0) — the primary
@@ -194,11 +195,16 @@ async function stageFilteredSkillDir(skillDir: string, excludeDirs: string[]): P
   return { stagedDir, cleanup: () => rm(stageRoot, { recursive: true, force: true }) };
 }
 
-function runSkillSpector(skillDir: string, outputPath: string): Promise<void> {
+function runSkillSpector(skillDir: string, outputPath: string, baselinePath: string | undefined): Promise<void> {
   return new Promise((resolve, reject) => {
+    const args = ["scan", skillDir, "--no-llm", "--format", "json", "--output", outputPath];
+    // --show-suppressed always, when a baseline applies -- cheap (doesn't affect scoring),
+    // and it's the only way skillfn can report "N reviewed finding(s) not shown" instead of
+    // a suppressed finding just silently vanishing with no trace in the report at all.
+    if (baselinePath) args.push("--baseline", baselinePath, "--show-suppressed");
     const child = spawn(
       "skillspector",
-      ["scan", skillDir, "--no-llm", "--format", "json", "--output", outputPath],
+      args,
       {
         stdio: ["ignore", "pipe", "pipe"],
         env: {
@@ -237,13 +243,17 @@ export const skillSpectorScanner: Scanner = {
       boundaries.map((b) => b.dir),
     );
 
+    // A baseline is always read from the skill's OWN directory, never the staged copy --
+    // same file either way, but this keeps the lookup obvious and independent of staging.
+    const baselinePath = (await baselineExists(skillDir)) ? baselinePathFor(skillDir) : undefined;
+
     const workDir = await mkdtemp(join(tmpdir(), "skillfn-scan-"));
     const outputPath = join(workDir, "report.json");
 
     // Not a blanket try/finally: the "unrecognized schema" branch below deliberately
     // keeps workDir on disk so the raw report it points to is actually inspectable —
     // deleting it there would make that error message a lie.
-    await runSkillSpector(stagedDir, outputPath);
+    await runSkillSpector(stagedDir, outputPath, baselinePath);
 
     let raw: string;
     try {
@@ -269,6 +279,8 @@ export const skillSpectorScanner: Scanner = {
 
     const findings = findingsArray.map(mapRawFinding);
     const completeness = extractCompleteness((parsed as Record<string, unknown>).analysis_completeness);
+    const suppressedCountRaw = (parsed as Record<string, unknown>).suppressed_count;
+    const suppressedCount = typeof suppressedCountRaw === "number" ? suppressedCountRaw : undefined;
     await rm(workDir, { recursive: true, force: true });
     await cleanupStage();
 
@@ -301,6 +313,7 @@ export const skillSpectorScanner: Scanner = {
         riskScore: ra.score as number,
         findings,
         completeness,
+        suppressedCount,
       };
     }
 
@@ -310,6 +323,7 @@ export const skillSpectorScanner: Scanner = {
       riskScore: computeRiskScore(findings),
       findings,
       completeness,
+      suppressedCount,
     };
   },
 };

@@ -11,11 +11,20 @@ import { passBanner, skillListLabel, truncateHint } from "../ui.js";
 import { findSkillsUnder, findVendoredSubtreesUnder, type FoundSkill, type OrphanedSkillFolder } from "../skillTreeDiscovery.js";
 import { findSkillMdFilename, offerRenameToCanonical, CANONICAL_SKILL_MD } from "../skillMdFile.js";
 import { discoverAllSkills } from "../skillDiscovery.js";
-import { runAggregateScan, buildAggregatedSkill, mergeReferenceChecks, type AggregateReport, type AggregatedReferenceCheck } from "../aggregateScan.js";
+import {
+  runAggregateScan,
+  buildAggregatedSkill,
+  mergeReferenceChecks,
+  type AggregateReport,
+  type AggregatedReferenceCheck,
+  type AggregatedSkill,
+  type UniqueRisk,
+} from "../aggregateScan.js";
 import { anyReferenceCheck, checkSkillReferences, NO_REFERENCE_CHECKS, type ReferenceCheckOptions } from "../brokenReferences.js";
 import { printAggregateReport, formatSkillBlock, formatSummaryBlock, writeMarkdownReport } from "../scanReport.js";
 import { buildFixPrompt, buildReportPointerPrompt, totalFindingCount, INLINE_PROMPT_MAX_CHARS } from "../agentHandoff.js";
 import { copyToClipboard } from "../clipboard.js";
+import { generateFreshFingerprints, mergeFingerprintsIntoBaseline, type FingerprintCandidate } from "../suppression.js";
 
 export interface RunScanOptions {
   context?: InstallOfferContext;
@@ -118,6 +127,7 @@ async function printSingleSkillTerminal(
     [result.completeness],
     nonCanonical,
     referenceCheck,
+    [result.suppressedCount ?? 0],
   );
   // No "Scanner: nvidia-skillspector" line here -- which engine ran is in --format json's
   // scannerName for tooling that cares, not routine terminal narration; the aggregate
@@ -230,6 +240,101 @@ async function copyOrPrint(text: string, whatItIs: string): Promise<void> {
   }
 }
 
+/** The relative (to `instanceDir`) file paths a risk's locations point into -- a location
+ * string is `${absoluteInstanceDir}/${relativeFile}[:${line}]` (see aggregateScan.ts's
+ * dedupeIntoRisks), so this just undoes that join. */
+function relativeFilesForRisk(risk: UniqueRisk, instanceDir: string): string[] {
+  const prefix = `${instanceDir}/`;
+  return risk.locations.filter((loc) => loc.startsWith(prefix)).map((loc) => loc.slice(prefix.length).replace(/:\d+$/, ""));
+}
+
+/**
+ * Lets the user mark one or more currently-reported findings as reviewed (a false positive,
+ * or an accepted risk) and records that in SkillSpector's own baseline file in the skill's
+ * directory -- future scans of this exact skill automatically suppress them (see
+ * skillSpectorScanner.ts). Generic over any skill/finding: nothing here is specific to any
+ * one skill's content, rule, or file.
+ */
+async function suppressFindingsFlow(report: AggregateReport): Promise<void> {
+  const withFindings = report.skills.filter((s) => s.uniqueRisks.length > 0);
+  if (withFindings.length === 0) {
+    p.log.info("No findings to suppress.");
+    return;
+  }
+
+  let skill: AggregatedSkill;
+  if (withFindings.length === 1) {
+    skill = withFindings[0];
+  } else {
+    const choice = await p.select({
+      message: "Which skill?",
+      options: withFindings.map((s) => ({ value: s.name, label: s.name, hint: `${s.uniqueRisks.length} finding type(s)` })),
+    });
+    if (p.isCancel(choice)) return;
+    skill = withFindings.find((s) => s.name === choice)!;
+  }
+
+  let instanceDir: string;
+  if (skill.instances.length === 1) {
+    instanceDir = skill.instances[0];
+  } else {
+    const choice = await p.select({
+      message: `Which instance of "${skill.name}"? (a baseline is per-directory)`,
+      options: skill.instances.map((dir) => ({ value: dir, label: dir })),
+    });
+    if (p.isCancel(choice)) return;
+    instanceDir = choice as string;
+  }
+
+  const picked = await p.multiselect({
+    message: "Which finding(s) are reviewed false positives / accepted risk?",
+    options: skill.uniqueRisks.map((r, i) => ({
+      value: String(i),
+      label: `[${r.severity.toUpperCase()}] ${r.rule}: ${truncateHint(r.message, 60)}`,
+      hint: `${r.count}x -- ${truncateHint(r.locations[0] ?? "", 50)}`,
+    })),
+    required: true,
+  });
+  if (p.isCancel(picked)) return;
+  const selectedRisks = (picked as string[]).map((i) => skill.uniqueRisks[Number(i)]);
+
+  const reason = await p.text({
+    message: "Reason (recorded in the baseline file -- required):",
+    validate: (v) => (v?.trim() ? undefined : "Required."),
+  });
+  if (p.isCancel(reason)) return;
+
+  const s = p.spinner();
+  s.start("Checking current findings against SkillSpector");
+  let fresh: { scannerVersion: string; fingerprints: FingerprintCandidate[] };
+  try {
+    fresh = await generateFreshFingerprints(instanceDir);
+  } catch (err) {
+    s.error("Couldn't generate fingerprints.");
+    p.log.error(err instanceof Error ? err.message : String(err));
+    return;
+  }
+  s.stop("Got current fingerprints.");
+
+  // Exact (rule, file) pairs the user actually selected -- not a cross-product of every
+  // selected rule against every selected file, which could suppress a DIFFERENT finding
+  // that just happens to share a rule with one selection and a file with another.
+  const targetPairs = new Set(selectedRisks.flatMap((r) => relativeFilesForRisk(r, instanceDir).map((f) => `${r.rule}::${f}`)));
+  const toAccept = fresh.fingerprints.filter((f) => targetPairs.has(`${f.ruleId}::${f.file}`));
+
+  if (toAccept.length === 0) {
+    p.log.warn(
+      "Couldn't match any current finding to what you selected -- the skill's content may have changed since this scan. Re-run 'skillfn scan' and try again.",
+    );
+    return;
+  }
+
+  const baselinePath = await mergeFingerprintsIntoBaseline(instanceDir, fresh.scannerVersion, fresh.fingerprints, toAccept, reason.trim());
+  p.log.success(
+    `${toAccept.length} finding(s) suppressed in ${baselinePath}. Commit this file -- future scans of this skill will treat them as reviewed.`,
+  );
+}
+
 async function postReportMenu(report: AggregateReport): Promise<void> {
   if (!process.stdin.isTTY) return;
   const hasFindings = totalFindingCount(report) > 0;
@@ -247,6 +352,15 @@ async function postReportMenu(report: AggregateReport): Promise<void> {
             ]
           : []),
         { value: "markdown", label: "Generate a Markdown report", hint: "collapsible sections, viewable in GitHub/VS Code" },
+        ...(hasFindings
+          ? [
+              {
+                value: "suppress",
+                label: "Mark a finding as reviewed (suppress it)",
+                hint: "writes a baseline file -- future scans won't re-flag it",
+              },
+            ]
+          : []),
         { value: "drive-agent", label: "Have skillfn run your coding agent directly", hint: "coming soon" },
         { value: "watch", label: "Set up a watcher for this folder", hint: "coming soon" },
         { value: "done", label: "Done" },
@@ -256,6 +370,11 @@ async function postReportMenu(report: AggregateReport): Promise<void> {
 
     if (choice === "watch" || choice === "drive-agent") {
       p.log.info("Coming soon.");
+      continue;
+    }
+
+    if (choice === "suppress") {
+      await suppressFindingsFlow(report);
       continue;
     }
 

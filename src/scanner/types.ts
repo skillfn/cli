@@ -56,6 +56,11 @@ export interface ScanResult {
   riskScore: number;
   findings: Finding[];
   completeness?: AnalysisCompleteness;
+  /** Findings suppressed by a reviewed baseline (see suppression.ts) -- already excluded
+   * from `findings`/riskScore/passed by the scanner itself, kept here only as a count so a
+   * report can say "N reviewed finding(s) not shown" instead of making it look like they
+   * were never found at all. */
+  suppressedCount?: number;
 }
 
 /**
