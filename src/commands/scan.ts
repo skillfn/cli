@@ -164,25 +164,23 @@ async function postReportMenu(report: AggregateReport): Promise<void> {
     const choice = await p.select({
       message: "Want me to:",
       options: [
-        { value: "markdown", label: "Generate a Markdown report (real collapsible sections -- open it in GitHub/VS Code)" },
-        { value: "watch", label: "Set up a watcher for this folder" },
+        { value: "markdown", label: "Generate a Markdown report", hint: "collapsible sections, viewable in GitHub/VS Code" },
+        { value: "watch", label: "Set up a watcher for this folder", hint: "coming soon" },
         { value: "done", label: "Done" },
       ],
     });
     if (p.isCancel(choice) || choice === "done") return;
 
-    if (choice === "markdown") {
-      const defaultPath = `skillfn-scan-report-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
-      const out = await p.text({ message: "Write report to:", initialValue: defaultPath });
-      if (p.isCancel(out)) continue;
-      await writeMarkdownReport(report, out);
-      p.log.success(`Wrote ${out}`);
-    } else if (choice === "watch") {
-      p.note(
-        "'skillfn watch' currently watches every platform's known skill directories (global + the current project), not an arbitrary custom folder -- cd into the project you want watched and run it from there.",
-        "Not wired up for a custom path yet",
-      );
+    if (choice === "watch") {
+      p.log.info("Coming soon.");
+      continue;
     }
+
+    const defaultPath = `skillfn-scan-report-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
+    const out = await p.text({ message: "Write report to:", initialValue: defaultPath });
+    if (p.isCancel(out)) continue;
+    await writeMarkdownReport(report, out);
+    p.log.success(`Wrote ${out}`);
   }
 }
 
@@ -242,7 +240,29 @@ async function pickScanTargets(): Promise<{ mode: "single"; path: string } | { m
   return targets === "single" ? { mode: "single", path: pathInput.trim() } : { mode: "aggregate", skills: targets };
 }
 
+/**
+ * Asks once, right after the scan target is known, instead of requiring --full to be
+ * remembered and typed -- only when it'd actually change anything: a script/CI context
+ * (non-TTY), an explicit --full/--no-full, or a machine-readable --format all already have
+ * their answer, so none of those get interrupted by a prompt.
+ */
+async function resolveFullDetail(options: ScanOptions): Promise<boolean> {
+  if (options.full !== undefined) return options.full;
+  if ((options.format ?? "terminal") !== "terminal" || !process.stdin.isTTY) return false;
+
+  const choice = await p.select({
+    message: "How much detail?",
+    options: [
+      { value: "normal", label: "Normal", hint: "critical/high in full, everything else as a count" },
+      { value: "full", label: "Full detail", hint: "show every finding" },
+    ],
+  });
+  return !p.isCancel(choice) && choice === "full";
+}
+
 export async function scanCommand(path: string | undefined, options: ScanOptions): Promise<void> {
+  let targets: { mode: "single"; path: string } | { mode: "aggregate"; skills: FoundSkill[] };
+
   if (path === undefined) {
     if (!process.stdin.isTTY) {
       console.error("A path is required when not running interactively: skillfn scan <path>");
@@ -250,27 +270,25 @@ export async function scanCommand(path: string | undefined, options: ScanOptions
       return;
     }
     p.intro("skillfn scan");
-    const targets = await pickScanTargets();
-    if (!targets) {
+    const picked = await pickScanTargets();
+    if (!picked) {
       p.cancel("Cancelled.");
       return;
     }
-    if (targets.mode === "single") {
-      await scanSinglePath(targets.path, options);
-    } else {
-      await runAggregateFlow(targets.skills, options);
+    targets = picked;
+  } else {
+    const resolved = await resolveTargetsForPath(path);
+    if (resolved === undefined) {
+      process.exitCode = 1;
+      return;
     }
-    return;
+    targets = resolved === "single" ? { mode: "single", path } : { mode: "aggregate", skills: resolved };
   }
 
-  const targets = await resolveTargetsForPath(path);
-  if (targets === undefined) {
-    process.exitCode = 1;
-    return;
-  }
-  if (targets === "single") {
-    await scanSinglePath(path, options);
+  const finalOptions = { ...options, full: await resolveFullDetail(options) };
+  if (targets.mode === "single") {
+    await scanSinglePath(targets.path, finalOptions);
   } else {
-    await runAggregateFlow(targets, options);
+    await runAggregateFlow(targets.skills, finalOptions);
   }
 }
