@@ -18,7 +18,8 @@ function formatElapsed(ms: number): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-function printRisks(risks: UniqueRisk[], full: boolean): void {
+function formatRisks(risks: UniqueRisk[], full: boolean): string[] {
+  const lines: string[] = [];
   const grouped = new Map<Severity, UniqueRisk[]>();
   for (const r of risks) grouped.set(r.severity, [...(grouped.get(r.severity) ?? []), r]);
 
@@ -26,49 +27,60 @@ function printRisks(risks: UniqueRisk[], full: boolean): void {
     const group = grouped.get(sev);
     if (!group || group.length === 0) continue;
     if (!full && !ALWAYS_DETAILED.has(sev)) {
-      console.log(`    [${colorSeverity(sev)}] ${chalk.dim(`${group.length} finding(s) -- rerun with --full to see them`)}`);
+      lines.push(`    [${colorSeverity(sev)}] ${chalk.dim(`${group.length} finding(s) -- rerun with --full to see them`)}`);
       continue;
     }
-    console.log(`    [${colorSeverity(sev)}]`);
+    lines.push(`    [${colorSeverity(sev)}]`);
     for (const r of group) {
       const occurrence = r.count > 1 ? chalk.dim(` (${r.count}x)`) : "";
-      console.log(`      - ${r.message}${occurrence}`);
+      lines.push(`      - ${r.message}${occurrence}`);
       const shown = r.locations.slice(0, 3).join(", ");
       const more = r.count > r.locations.length ? chalk.dim(`, +${r.count - r.locations.length} more`) : "";
-      console.log(`        ${chalk.dim(`${r.rule} — ${shown}${more}`)}`);
+      lines.push(`        ${chalk.dim(`${r.rule} — ${shown}${more}`)}`);
     }
   }
+  return lines;
 }
 
-export function printAggregateReport(report: AggregateReport, options: { full?: boolean } = {}): void {
-  console.log();
-  for (const skill of report.skills) {
-    console.log(heading(`${skill.name}`));
-    if (skill.description) console.log(`  ${chalk.dim(skill.description)}`);
-    console.log(`  used in: ${skill.instances.length} instance(s)`);
-    for (const dir of skill.instances) console.log(`    - ${chalk.dim(dir)}`);
-    console.log(`  risk breakdown: ${formatBreakdown(skill.severityCounts)}`);
-    if (skill.uniqueRisks.length > 0) {
-      console.log(`  risks & issues:`);
-      printRisks(skill.uniqueRisks, options.full ?? false);
-    }
-    console.log();
+/** One skill's block, as lines -- shared by the static full-report printer and live
+ * per-skill streaming (aggregateScan.ts's onSkillReady), so both render identically. */
+export function formatSkillBlock(skill: AggregatedSkill, options: { full?: boolean } = {}): string {
+  const lines: string[] = [heading(skill.name)];
+  if (skill.description) lines.push(`  ${chalk.dim(skill.description)}`);
+  lines.push(`  used in: ${skill.instances.length} instance(s)`);
+  for (const dir of skill.instances) lines.push(`    - ${chalk.dim(dir)}`);
+  lines.push(`  risk breakdown: ${formatBreakdown(skill.severityCounts)}`);
+  if (skill.uniqueRisks.length > 0) {
+    lines.push(`  risks & issues:`, ...formatRisks(skill.uniqueRisks, options.full ?? false));
   }
+  lines.push("");
+  return lines.join("\n");
+}
 
+export function formatSummaryBlock(report: AggregateReport): string {
   const totals: Partial<Record<Severity, number>> = {};
   for (const skill of report.skills) {
     for (const sev of SEVERITY_ORDER) totals[sev] = (totals[sev] ?? 0) + (skill.severityCounts[sev] ?? 0);
   }
   const instanceCount = new Set(report.skills.flatMap((s) => s.instances)).size;
 
-  console.log(heading("Summary"));
-  console.log(`  scanned: ${report.skills.length} skill(s) across ${instanceCount} instance(s)/director${instanceCount === 1 ? "y" : "ies"}`);
-  console.log(`  runtime: ${formatElapsed(report.elapsedMs)}`);
-  console.log(`  breakdown: ${formatBreakdown(totals)}`);
+  const lines = [
+    heading("Summary"),
+    `  scanned: ${report.skills.length} skill(s) across ${instanceCount} instance(s)/director${instanceCount === 1 ? "y" : "ies"}`,
+    `  runtime: ${formatElapsed(report.elapsedMs)}`,
+    `  breakdown: ${formatBreakdown(totals)}`,
+  ];
   if (report.scanErrors > 0) {
-    console.log(chalk.dim(`  (${report.scanErrors} instance(s) failed to scan and were skipped)`));
+    lines.push(chalk.dim(`  (${report.scanErrors} instance(s) failed to scan and were skipped)`));
   }
+  lines.push("");
+  return lines.join("\n");
+}
+
+export function printAggregateReport(report: AggregateReport, options: { full?: boolean } = {}): void {
   console.log();
+  for (const skill of report.skills) console.log(formatSkillBlock(skill, options));
+  console.log(formatSummaryBlock(report));
 }
 
 function escapeMd(text: string): string {

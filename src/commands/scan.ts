@@ -11,7 +11,7 @@ import { passBanner } from "../ui.js";
 import { findSkillsUnder, type FoundSkill } from "../skillTreeDiscovery.js";
 import { discoverAllSkills } from "../skillDiscovery.js";
 import { runAggregateScan, buildAggregatedSkill, type AggregateReport } from "../aggregateScan.js";
-import { printAggregateReport, writeMarkdownReport } from "../scanReport.js";
+import { printAggregateReport, formatSkillBlock, formatSummaryBlock, writeMarkdownReport } from "../scanReport.js";
 
 export interface RunScanOptions {
   context?: InstallOfferContext;
@@ -138,19 +138,31 @@ async function hasSkillMdDirectly(path: string): Promise<boolean> {
 }
 
 async function runAggregateFlow(skills: FoundSkill[], options: ScanOptions): Promise<void> {
-  const report = await runAggregateScan(skills);
   const format = options.format ?? "terminal";
 
-  if (format === "json") {
-    console.log(JSON.stringify(report, null, 2));
-  } else if (format === "sarif") {
+  if (format === "sarif") {
     console.error(
       "SARIF output isn't supported for a multi-skill scan yet -- scan an individual skill directory (the one with its own SKILL.md) for SARIF.",
     );
     process.exitCode = 1;
     return;
+  }
+
+  // Terminal mode streams each skill's block to stdout the instant it's ready (riding the
+  // same stream as the live progress footer, so they can't race into a corrupted screen --
+  // see ThreadedProgress.print) instead of waiting for the whole batch to finish. json mode
+  // collects everything and serializes it at the end, so the progress footer stays on
+  // stderr and nothing streams, keeping stdout pure JSON.
+  const streaming = format === "terminal";
+  const report = await runAggregateScan(skills, {
+    progressOutput: streaming ? process.stdout : process.stderr,
+    onSkillReady: streaming ? (skill) => formatSkillBlock(skill, { full: options.full }) : undefined,
+  });
+
+  if (format === "json") {
+    console.log(JSON.stringify(report, null, 2));
   } else {
-    printAggregateReport(report, { full: options.full });
+    console.log(formatSummaryBlock(report));
     await postReportMenu(report);
   }
 

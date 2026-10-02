@@ -50,6 +50,19 @@ export class ThreadedProgress {
     this.slots[lane] = { status: "idle" };
   }
 
+  /**
+   * Flushes a finished result above the live progress block instead of waiting for
+   * everything to finish -- the progress rows stay pinned at the bottom (cleared and
+   * redrawn below whatever was just printed), the same sticky-footer pattern build tools
+   * like cargo/docker compose use. Only ThreadedProgress ever moves the cursor, so this and
+   * the live redraw can't race each other into a corrupted screen.
+   */
+  print(text: string): void {
+    if (this.interactive) this.clear();
+    this.output.write(`${text}\n`);
+    if (this.interactive) this.render();
+  }
+
   stop(finalMessage: string): void {
     if (this.timer) clearInterval(this.timer);
     if (this.interactive) {

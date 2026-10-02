@@ -85,47 +85,76 @@ async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, (_, i) => lane(i)));
 }
 
+export interface RunAggregateScanOptions {
+  concurrency?: number;
+  /** Where the live progress (and any streamed skill block, see onSkillReady) is drawn.
+   * Defaults to stderr so --format json/sarif's stdout stays pure; the terminal-format
+   * caller passes stdout instead so streamed blocks land where a human would redirect or
+   * page the actual report, with the progress footer riding along on the same stream. */
+   progressOutput?: NodeJS.WriteStream;
+  /**
+   * Called the instant a skill's LAST instance finishes (every instance of a given name
+   * must finish before that name is "done" -- printing a partial, still-updating block
+   * for the same skill would be more confusing than waiting the extra moment). Returning
+   * a string streams it immediately, above the still-running progress rows, Claude-chat-
+   * output style, instead of waiting for every skill in the batch to finish first.
+   */
+  onSkillReady?: (skill: AggregatedSkill) => string | void;
+}
+
 /**
  * Scans each discovered skill directory individually (never one scan across a huge tree --
  * that's slow and produces findings with no clear owning skill) and groups the results by
  * skill name, since the same skill can legitimately exist in multiple places (an active
  * copy plus an archived snapshot, a monorepo with several packages vendoring it, etc.).
  */
-export async function runAggregateScan(skills: FoundSkill[], concurrency = 4): Promise<AggregateReport> {
+export async function runAggregateScan(skills: FoundSkill[], options: RunAggregateScanOptions = {}): Promise<AggregateReport> {
+  const concurrency = options.concurrency ?? 4;
   const start = Date.now();
-  const byName = new Map<string, { description: string; instances: string[]; findings: Array<{ finding: Finding; dir: string }> }>();
+  const byName = new Map<
+    string,
+    { description: string; instances: string[]; findings: Array<{ finding: Finding; dir: string }>; remaining: number }
+  >();
+  for (const skill of skills) {
+    const entry = byName.get(skill.name) ?? { description: skill.description, instances: [], findings: [], remaining: 0 };
+    entry.remaining++;
+    byName.set(skill.name, entry);
+  }
   let scanErrors = 0;
 
-  const progress = new ThreadedProgress(skills.length, concurrency);
+  const progress = new ThreadedProgress(skills.length, concurrency, options.progressOutput);
   progress.start();
+
+  const ready: AggregatedSkill[] = [];
 
   await runWithConcurrency(skills, concurrency, async (skill, lane) => {
     progress.assign(lane, skill.name);
     let ok = true;
+    const entry = byName.get(skill.name)!;
     try {
       const result = await skillSpectorScanner.scan(skill.dir);
-      const entry = byName.get(skill.name) ?? { description: skill.description, instances: [], findings: [] };
       entry.instances.push(skill.dir);
       for (const finding of result.findings) entry.findings.push({ finding, dir: skill.dir });
-      byName.set(skill.name, entry);
     } catch {
       ok = false;
       scanErrors++;
     } finally {
       progress.complete(lane, ok);
+      entry.remaining--;
+      if (entry.remaining === 0) {
+        const built = buildAggregatedSkill(skill.name, entry.description, entry.findings, entry.instances);
+        ready.push(built);
+        const text = options.onSkillReady?.(built);
+        if (text) progress.print(text);
+      }
     }
   });
 
   progress.stop(`Scanned ${skills.length} skill instance(s).`);
 
-  const aggregated: AggregatedSkill[] = [];
-  for (const [name, { description, instances, findings }] of byName) {
-    aggregated.push(buildAggregatedSkill(name, description, findings, instances));
-  }
-
   const worstSeverity = (skill: AggregatedSkill): number =>
     Math.max(0, ...Object.entries(skill.severityCounts).map(([sev, n]) => (n ? SEVERITY_RANK[sev as Severity] : -1)));
-  aggregated.sort((a, b) => worstSeverity(b) - worstSeverity(a));
+  ready.sort((a, b) => worstSeverity(b) - worstSeverity(a));
 
-  return { skills: aggregated, totalInstancesScanned: skills.length, scanErrors, elapsedMs: Date.now() - start };
+  return { skills: ready, totalInstancesScanned: skills.length, scanErrors, elapsedMs: Date.now() - start };
 }
