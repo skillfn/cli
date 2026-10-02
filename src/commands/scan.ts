@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import chalk from "chalk";
 import YAML from "yaml";
@@ -9,6 +9,7 @@ import { toSarif } from "../sarif.js";
 import { offerToInstallSkillSpector, manualInstallInstructions, type InstallOfferContext } from "../skillSpectorInstall.js";
 import { passBanner, skillListLabel, truncateHint } from "../ui.js";
 import { findSkillsUnder, type FoundSkill } from "../skillTreeDiscovery.js";
+import { findSkillMdFilename } from "../skillMdFile.js";
 import { discoverAllSkills } from "../skillDiscovery.js";
 import { runAggregateScan, buildAggregatedSkill, type AggregateReport } from "../aggregateScan.js";
 import { printAggregateReport, formatSkillBlock, formatSummaryBlock, writeMarkdownReport } from "../scanReport.js";
@@ -73,7 +74,9 @@ export async function runScan(path: string, options: RunScanOptions = {}): Promi
  * falls back to the directory name so the report always has something to show. */
 async function readSkillMeta(path: string): Promise<{ name: string; description: string }> {
   try {
-    const text = await readFile(join(path, "SKILL.md"), "utf8");
+    const filename = await findSkillMdFilename(path);
+    if (!filename) return { name: path, description: "" };
+    const text = await readFile(join(path, filename), "utf8");
     const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     if (match) {
       const front = YAML.parse(match[1]) as Record<string, unknown>;
@@ -135,12 +138,7 @@ async function scanSinglePath(path: string, options: ScanOptions): Promise<void>
 }
 
 async function hasSkillMdDirectly(path: string): Promise<boolean> {
-  try {
-    await access(join(path, "SKILL.md"));
-    return true;
-  } catch {
-    return false;
-  }
+  return (await findSkillMdFilename(path)) !== undefined;
 }
 
 async function runAggregateFlow(skills: FoundSkill[], options: ScanOptions): Promise<void> {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import YAML from "yaml";
 import chalk from "chalk";
 import { heading, dim, success, warn } from "../ui.js";
+import { findSkillMdEntry } from "../skillMdFile.js";
 
 interface LocalSkill {
   name: string;
@@ -41,9 +42,10 @@ async function loadLocalSkills(
   for (const entry of await readdir(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const dir = join(root, entry.name);
-    const skillMdPath = join(dir, "SKILL.md");
     try {
-      const text = await readFile(skillMdPath, "utf8");
+      const skillMdName = findSkillMdEntry(await readdir(dir, { withFileTypes: true }));
+      if (!skillMdName) continue;
+      const text = await readFile(join(dir, skillMdName), "utf8");
       const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
       if (!match) continue;
       const front = YAML.parse(match[1]) as Record<string, unknown>;

@@ -4,6 +4,7 @@ import * as p from "@clack/prompts";
 import YAML from "yaml";
 import { runScan, SkillSpectorRequiredError } from "./scan.js";
 import { HUB_URL, postJsonWithReauth } from "../session.js";
+import { findSkillMdFilename } from "../skillMdFile.js";
 
 // Marker left in a published skill's own directory so `skillfn update` (and a friendly
 // hint from `publish` itself) can find its skid without the user having to remember or
@@ -146,11 +147,11 @@ export async function publishCommand(path: string, options: PublishOptions): Pro
     return;
   }
 
-  const skillMdPath = join(path, "SKILL.md");
   let name = "";
   let description = "";
   try {
-    const text = await readFile(skillMdPath, "utf8");
+    const skillMdName = await findSkillMdFilename(path);
+    const text = await readFile(join(path, skillMdName ?? "SKILL.md"), "utf8");
     const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     if (match) {
       const front = YAML.parse(match[1]) as Record<string, unknown>;

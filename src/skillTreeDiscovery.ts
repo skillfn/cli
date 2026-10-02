@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import YAML from "yaml";
+import { findSkillMdEntry } from "./skillMdFile.js";
 
 export interface FoundSkill {
   name: string;
@@ -33,9 +34,9 @@ export async function findSkillsUnder(root: string, maxDepth = 12): Promise<Foun
       return; // unreadable (permissions, race) -- skip, don't fail the whole walk
     }
 
-    const hasSkillMd = entries.some((e) => e.isFile() && e.name === "SKILL.md");
-    if (hasSkillMd) {
-      const skillMdPath = join(dir, "SKILL.md");
+    const skillMdName = findSkillMdEntry(entries);
+    if (skillMdName) {
+      const skillMdPath = join(dir, skillMdName);
       try {
         const text = await readFile(skillMdPath, "utf8");
         const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);

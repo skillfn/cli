@@ -2,6 +2,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import YAML from "yaml";
 import { PLATFORMS, type PlatformInfo } from "./platforms.js";
+import { findSkillMdEntry } from "./skillMdFile.js";
 
 export interface DiscoveredSkill {
   name: string;
@@ -31,7 +32,9 @@ async function loadSkillsFrom(
     if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
     const dir = `${root}/${entry.name}`;
     try {
-      const text = await readFile(`${dir}/SKILL.md`, "utf8");
+      const skillMdName = findSkillMdEntry(await readdir(dir, { withFileTypes: true }));
+      if (!skillMdName) continue;
+      const text = await readFile(`${dir}/${skillMdName}`, "utf8");
       const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
       if (!match) continue;
       const front = YAML.parse(match[1]) as Record<string, unknown>;
