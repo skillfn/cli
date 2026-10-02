@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadSession, HUB_URL } from "../session.js";
 import { PLATFORMS } from "../platforms.js";
-import { offerToInstallSkillSpector } from "../skillSpectorInstall.js";
+import { offerToInstallSkillSpector, manualInstallInstructions } from "../skillSpectorInstall.js";
 
 /**
  * `brew doctor`/`flutter doctor`-shaped diagnostics -- checks the things most likely to
@@ -69,7 +69,7 @@ export async function doctorCommand(options: DoctorOptions = {}): Promise<void> 
   const hasSkillSpector = await checkLine("skillspector on PATH", async () =>
     (await isSkillSpectorInstalled())
       ? undefined
-      : "required, not found. Install: uv tool install git+https://github.com/NVIDIA/skillspector.git",
+      : `required, not found. Install:\n      ${(await manualInstallInstructions()).replace(/\n/g, "\n      ")}`,
   );
   if (!hasSkillSpector) {
     await offerToInstallSkillSpector({ context: "doctor", autoYes: options.yes });

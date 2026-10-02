@@ -70,6 +70,19 @@ export interface InstallOfferOptions {
   context: InstallOfferContext;
 }
 
+/**
+ * The real install instructions, accounting for whether `uv` is ALSO missing -- used
+ * both for the silent non-interactive bail-out below and for the generic
+ * SkillSpectorRequiredError message in scan.ts. Previously those hardcoded just the
+ * `uv tool install ...` line unconditionally, which fails with "command not found" and
+ * no further guidance when `uv` itself isn't on the machine yet.
+ */
+export async function manualInstallInstructions(): Promise<string> {
+  const skillspectorLine = `uv tool install git+https://github.com/NVIDIA/skillspector.git`;
+  const uvCmd = await resolveUvCommand();
+  return uvCmd ? skillspectorLine : `${UV_INSTALL_MANUAL_COMMAND}\n${skillspectorLine}`;
+}
+
 async function runWithSpinner(label: string, cmd: string, args: string[]): Promise<boolean> {
   const s = p.spinner();
   s.start(`Installing ${label}`);
@@ -81,7 +94,18 @@ async function runWithSpinner(label: string, cmd: string, args: string[]): Promi
 /** Returns true if SkillSpector ended up installed (already was, or the offer just succeeded). */
 export async function offerToInstallSkillSpector(options: InstallOfferOptions): Promise<boolean> {
   if (await commandWorks("skillspector")) return true;
-  if (!process.stdin.isTTY && !options.autoYes) return false; // never hang a non-interactive/piped context
+  if (!process.stdin.isTTY && !options.autoYes) {
+    // Never hang a non-interactive/piped context -- but say why, and with the real
+    // instructions (including the `uv` step if that's missing too), instead of bailing
+    // silently and leaving the caller's generic fallback message to possibly assume `uv`
+    // is already installed when it isn't.
+    console.error(
+      "Not running interactively (no TTY) and --yes wasn't passed, so skillfn won't install " +
+        "anything automatically. Run this yourself, then try again:\n  " +
+        (await manualInstallInstructions()).replace(/\n/g, "\n  "),
+    );
+    return false;
+  }
 
   const uvCmd = await resolveUvCommand();
 

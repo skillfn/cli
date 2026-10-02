@@ -1,7 +1,7 @@
 import { skillSpectorScanner, ScannerNotInstalledError } from "../scanner/skillSpectorScanner.js";
 import type { ScanResult } from "../scanner/types.js";
 import { toSarif } from "../sarif.js";
-import { offerToInstallSkillSpector, type InstallOfferContext } from "../skillSpectorInstall.js";
+import { offerToInstallSkillSpector, manualInstallInstructions, type InstallOfferContext } from "../skillSpectorInstall.js";
 
 const SEVERITY_ORDER = ["info", "low", "medium", "high", "critical"] as const;
 
@@ -28,10 +28,9 @@ export async function runScan(path: string, options: RunScanOptions = {}): Promi
       if (installed) {
         return await skillSpectorScanner.scan(path); // retry now that it's actually there
       }
+      const instructions = (await manualInstallInstructions()).replace(/\n/g, "\n  ");
       throw new SkillSpectorRequiredError(
-        "Skillfn requires SkillSpector to run a security scan. Install it with:\n" +
-          "  uv tool install git+https://github.com/NVIDIA/skillspector.git\n" +
-          "Then try again.",
+        `Skillfn requires SkillSpector to run a security scan. Install it with:\n  ${instructions}\nThen try again.`,
       );
     }
     throw err;
