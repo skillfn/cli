@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import chalk from "chalk";
 import YAML from "yaml";
 import * as p from "@clack/prompts";
@@ -13,6 +13,8 @@ import { findSkillMdFilename, offerRenameToCanonical, CANONICAL_SKILL_MD } from 
 import { discoverAllSkills } from "../skillDiscovery.js";
 import { runAggregateScan, buildAggregatedSkill, type AggregateReport } from "../aggregateScan.js";
 import { printAggregateReport, formatSkillBlock, formatSummaryBlock, writeMarkdownReport } from "../scanReport.js";
+import { buildFixPrompt, buildReportPointerPrompt, totalFindingCount, INLINE_PROMPT_MAX_CHARS } from "../agentHandoff.js";
+import { copyToClipboard } from "../clipboard.js";
 
 export interface RunScanOptions {
   context?: InstallOfferContext;
@@ -95,7 +97,12 @@ async function readSkillMeta(path: string): Promise<{ name: string; description:
  * were scanned. --format json/sarif are untouched: those are the stable, already-published
  * single-skill schema other tooling (GitHub Code Scanning, scripts) depends on.
  */
-async function printSingleSkillTerminal(path: string, result: ScanResult, elapsedMs: number, options: { full?: boolean }): Promise<void> {
+async function printSingleSkillTerminal(
+  path: string,
+  result: ScanResult,
+  elapsedMs: number,
+  options: { full?: boolean },
+): Promise<AggregateReport> {
   const { name, description } = await readSkillMeta(path);
   // Read fresh, after resolveTargetsForPath's rename offer already had its chance --
   // reflects whichever name is actually in effect now (renamed or left as-is).
@@ -113,7 +120,9 @@ async function printSingleSkillTerminal(path: string, result: ScanResult, elapse
   // scannerName for tooling that cares, not routine terminal narration; the aggregate
   // report (scanReport.ts) never showed it either, so this is consistent either way.
   console.log(`\n${chalk.dim("Risk score:")} ${result.riskScore}    ${chalk.dim("Result:")} ${passBanner(result.passed)}`);
-  printAggregateReport({ skills: [skill], totalInstancesScanned: 1, scanErrors: 0, elapsedMs }, options);
+  const report: AggregateReport = { skills: [skill], totalInstancesScanned: 1, scanErrors: 0, elapsedMs };
+  printAggregateReport(report, options);
+  return report;
 }
 
 interface ScanOptions {
@@ -142,7 +151,8 @@ async function scanSinglePath(path: string, options: ScanOptions): Promise<void>
   } else if (format === "sarif") {
     console.log(JSON.stringify(toSarif(result), null, 2));
   } else {
-    await printSingleSkillTerminal(path, result, Date.now() - start, { full: options.full });
+    const report = await printSingleSkillTerminal(path, result, Date.now() - start, { full: options.full });
+    await postReportMenu(report);
   }
 
   process.exitCode = result.passed ? 0 : 1;
@@ -181,21 +191,56 @@ async function runAggregateFlow(skills: FoundSkill[], options: ScanOptions): Pro
   process.exitCode = hasBlocking ? 1 : 0;
 }
 
+/** Copies `text`, falling back to printing it for the user to copy by hand when no
+ * clipboard tool is available (e.g. a headless/SSH session). */
+async function copyOrPrint(text: string, whatItIs: string): Promise<void> {
+  if (await copyToClipboard(text)) {
+    p.log.success(`Copied ${whatItIs} to your clipboard -- paste it into your coding agent.`);
+  } else {
+    p.log.warn(`Couldn't reach the system clipboard -- here's ${whatItIs} to copy yourself:`);
+    console.log(`\n${text}\n`);
+  }
+}
+
 async function postReportMenu(report: AggregateReport): Promise<void> {
   if (!process.stdin.isTTY) return;
+  const hasFindings = totalFindingCount(report) > 0;
   for (;;) {
     const choice = await p.select({
       message: "Want me to:",
       options: [
+        ...(hasFindings
+          ? [
+              {
+                value: "fix-prompt",
+                label: "Tell your agent to fix these",
+                hint: "copies a ready-to-paste prompt (or a report + prompt, if it's large) to your clipboard",
+              },
+            ]
+          : []),
         { value: "markdown", label: "Generate a Markdown report", hint: "collapsible sections, viewable in GitHub/VS Code" },
+        { value: "drive-agent", label: "Have skillfn run your coding agent directly", hint: "coming soon" },
         { value: "watch", label: "Set up a watcher for this folder", hint: "coming soon" },
         { value: "done", label: "Done" },
       ],
     });
     if (p.isCancel(choice) || choice === "done") return;
 
-    if (choice === "watch") {
+    if (choice === "watch" || choice === "drive-agent") {
       p.log.info("Coming soon.");
+      continue;
+    }
+
+    if (choice === "fix-prompt") {
+      const prompt = buildFixPrompt(report);
+      if (prompt.length <= INLINE_PROMPT_MAX_CHARS) {
+        await copyOrPrint(prompt, `a fix prompt (${totalFindingCount(report)} issue(s))`);
+      } else {
+        const reportPath = `skillfn-scan-report-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
+        await writeMarkdownReport(report, reportPath);
+        p.log.success(`Wrote ${reportPath} (too many issues to paste inline).`);
+        await copyOrPrint(buildReportPointerPrompt(report, resolve(reportPath)), "a prompt pointing to it");
+      }
       continue;
     }
 
