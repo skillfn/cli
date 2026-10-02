@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import * as p from "@clack/prompts";
 import { skillSpectorScanner, ScannerNotInstalledError } from "../scanner/skillSpectorScanner.js";
 import type { ScanResult } from "../scanner/types.js";
 import { toSarif } from "../sarif.js";
@@ -15,20 +16,40 @@ export interface RunScanOptions {
 /** Thrown when SkillSpector isn't installed and the user declined (or the install failed). */
 export class SkillSpectorRequiredError extends Error {}
 
+/**
+ * SkillSpector's actual scan can take a while with zero output of its own, especially on
+ * its first run right after a fresh `uv tool install` (cold Python interpreter start plus
+ * importing its own fairly heavy dependency tree -- numpy, yara-python, tiktoken, etc.).
+ * Without this, the install spinner stops at "SkillSpector installed." and the CLI then
+ * goes completely silent for that whole stretch, which a real user (correctly) reads as
+ * "it's stalled." Output goes to stderr, never stdout, so --format json/sarif stays clean.
+ */
+async function scanWithSpinner(path: string): Promise<ScanResult> {
+  const s = p.spinner({ output: process.stderr });
+  s.start("Running SkillSpector scan (first run after install can take a minute)");
+  try {
+    const result = await skillSpectorScanner.scan(path);
+    s.stop("Scan complete.");
+    return result;
+  } catch (err) {
+    // ScannerNotInstalledError isn't a failed scan -- it's the normal "not set up yet"
+    // path the caller handles next (offering to install), so don't frame it as one.
+    s.error(err instanceof ScannerNotInstalledError ? "SkillSpector isn't installed." : "Scan failed.");
+    throw err;
+  }
+}
+
 export async function runScan(path: string, options: RunScanOptions = {}): Promise<ScanResult> {
   try {
-    return await skillSpectorScanner.scan(path);
+    return await scanWithSpinner(path);
   } catch (err) {
     if (err instanceof ScannerNotInstalledError) {
-      // Diagnostic, not data -- always stderr, so --format json/sarif output on stdout
-      // stays clean and pipeable (e.g. straight into a GitHub Code Scanning upload step).
-      console.error("NVIDIA SkillSpector is required and isn't installed.\n");
       const installed = await offerToInstallSkillSpector({
         context: options.context ?? "scan",
         autoYes: options.autoYes,
       });
       if (installed) {
-        return await skillSpectorScanner.scan(path); // retry now that it's actually there
+        return await scanWithSpinner(path); // retry now that it's actually there
       }
       const instructions = (await manualInstallInstructions()).replace(/\n/g, "\n  ");
       throw new SkillSpectorRequiredError(
