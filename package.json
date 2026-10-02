@@ -1,6 +1,6 @@
 {
   "name": "skillfn",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Security-scan, sign, and publish AI agent skills (SKILL.md) — wraps NVIDIA SkillSpector, tracks lineage, works with any SKILL.md-compatible agent.",
   "keywords": [
     "skill",
