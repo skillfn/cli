@@ -3,7 +3,7 @@ import chalk from "chalk";
 import type { Severity } from "./scanner/types.js";
 import type { AggregateReport, AggregatedSkill, UniqueRisk } from "./aggregateScan.js";
 import type { BrokenReason, BrokenReference, ReferenceKind } from "./brokenReferences.js";
-import { heading, dim, warn, colorSeverity } from "./ui.js";
+import { heading, dim, warn, note, colorSeverity } from "./ui.js";
 import { BASELINE_FILENAME } from "./suppression.js";
 
 const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
@@ -91,12 +91,19 @@ function formatElapsed(ms: number): string {
  */
 function incompleteSummary(skill: AggregatedSkill): string {
   const pct = skill.coveragePercent !== undefined ? ` (${skill.coveragePercent.toFixed(0)}% coverage)` : "";
-  const reason = skill.incompleteReasons.length > 0 ? skill.incompleteReasons.join("; ") : "some content wasn't inspected";
+  const reason =
+    skill.incompleteReasons.length > 0
+      ? skill.incompleteReasons.map((r) => r.replace(/\.+$/, "")).join("; ")
+      : "some content wasn't inspected, for an unknown reason";
   const seeBelow = skill.scanLimitations.length > 0 ? ` See "scan limitations" below.` : "";
   const suggestion = skill.scanLimitations.length > 0
     ? " Try SKILLSPECTOR_MAX_WORKFLOW_SECONDS=3600 (seconds) if this is a large skill."
-    : "";
-  return `Scan did not fully complete${pct} -- ${reason}.${seeBelow}${suggestion}`;
+    : skill.incompleteReasons.length === 0
+      ? " Try 'skillfn scan' again -- this can be transient."
+      : "";
+  // Note: this is a scanner-side limitation, not a security verdict about the skill -- it
+  // never affects the risk score or pass/fail result above.
+  return `Analysis didn't fully complete${pct} -- ${reason}.${seeBelow}${suggestion}`;
 }
 
 function groupBrokenReferences(refs: BrokenReference[]): Array<[BrokenReason, BrokenReference[]]> {
@@ -175,7 +182,7 @@ function formatRiskTree(risks: UniqueRisk[], full: boolean, prefix: string): str
 export function formatSkillBlock(skill: AggregatedSkill, options: { full?: boolean } = {}): string {
   const lines: string[] = [heading(`${SKILL_ICON} ${skill.name}`)];
   if (skill.incomplete) {
-    lines.push(warn(incompleteSummary(skill)));
+    lines.push(note(incompleteSummary(skill)));
   }
   for (const path of skill.nonCanonicalManifests) {
     lines.push(warn(`${path} isn't named exactly "SKILL.md" -- some tools on a case-sensitive filesystem won't find it. Rename it to fix.`));
@@ -304,7 +311,7 @@ export function buildMarkdownReport(report: AggregateReport): string {
   for (const skill of report.skills) {
     lines.push(`## ${escapeMd(skill.name)}`, "");
     if (skill.incomplete) {
-      lines.push(`> ⚠️ ${escapeMd(incompleteSummary(skill))}`, "");
+      lines.push(`> ℹ️ ${escapeMd(incompleteSummary(skill))}`, "");
     }
     for (const path of skill.nonCanonicalManifests) {
       lines.push(

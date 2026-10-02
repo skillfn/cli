@@ -135,10 +135,32 @@ function mapRawFinding(raw: Record<string, unknown>): Finding {
  * Tolerant of a missing/malformed field (older SkillSpector versions, or another scanner
  * behind the same interface someday): completeness is just omitted, not fabricated.
  */
+/**
+ * SkillSpector's `analysis_completeness.limitations` (a plain string array) is NOT the only
+ * place it explains an incomplete result -- `ledger_exceptions` (confirmed real field,
+ * `outcome`/`phase`/`reason_code`/`message` per entry) is a separate, more detailed account
+ * of specific things it couldn't fully resolve, e.g. a `reference_resolution` exception for
+ * "a local path-like reference does not match any bundled artifact." Confirmed real case: a
+ * scan with every analyzer reporting "completed" and 100% file coverage still came back
+ * `is_complete: false` with an EMPTY `limitations` array -- looked unexplained and possibly
+ * flaky, until the raw report showed a non-empty `ledger_exceptions` entry that `limitations`
+ * alone never surfaced. Read both, so a real, already-present explanation isn't missed.
+ */
+function extractLedgerExceptionReasons(raw: Record<string, unknown>): string[] {
+  const exceptions = raw.ledger_exceptions;
+  if (!Array.isArray(exceptions)) return [];
+  return exceptions
+    .map((e) => (e && typeof e === "object" ? (e as Record<string, unknown>) : undefined))
+    .filter((e): e is Record<string, unknown> => e !== undefined)
+    .map((e) => (typeof e.message === "string" ? e.message : undefined))
+    .filter((m): m is string => m !== undefined);
+}
+
 function extractCompleteness(raw: unknown): AnalysisCompleteness | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const c = raw as Record<string, unknown>;
   if (typeof c.is_complete !== "boolean") return undefined;
+  const limitations = Array.isArray(c.limitations) ? c.limitations.filter((l): l is string => typeof l === "string") : [];
   return {
     isComplete: c.is_complete,
     status: typeof c.status === "string" ? c.status : c.is_complete ? "complete" : "partial",
@@ -146,7 +168,7 @@ function extractCompleteness(raw: unknown): AnalysisCompleteness | undefined {
     fullyInspectedFiles: typeof c.fully_inspected_files === "number" ? c.fully_inspected_files : 0,
     partiallyInspectedFiles: typeof c.partially_inspected_files === "number" ? c.partially_inspected_files : 0,
     entirelyUninspectedFiles: typeof c.entirely_uninspected_files === "number" ? c.entirely_uninspected_files : 0,
-    limitations: Array.isArray(c.limitations) ? c.limitations.filter((l): l is string => typeof l === "string") : [],
+    limitations: [...new Set([...limitations, ...extractLedgerExceptionReasons(c)])],
   };
 }
 
@@ -233,26 +255,32 @@ function runSkillSpector(skillDir: string, outputPath: string, baselinePath: str
   });
 }
 
-export const skillSpectorScanner: Scanner = {
-  name: "nvidia-skillspector",
+/**
+ * True when SkillSpector reported it couldn't fully complete, but gave literally no reason
+ * (empty `limitations`) -- as opposed to a specific, explained cause like "Analyzer X status:
+ * degraded." or a real AE1 content-size truncation. Confirmed real case: an identical,
+ * 12-file skill came back `isComplete: false` with zero explanation, consistently across
+ * repeated runs, on a scan that otherwise finished in seconds -- a transient hiccup is a far
+ * more likely explanation than the scanner having an actual, inherent problem with that
+ * content, and a cheap retry is the standard way serious systems handle exactly this shape of
+ * signal (an unexplained transient failure) rather than surfacing it to the end user
+ * immediately. An explained incompleteness is never retried: the explanation is real
+ * information (e.g. a genuine size/time limit) that retrying the same content won't change.
+ */
+function isUnexplainedIncomplete(completeness: AnalysisCompleteness | undefined): boolean {
+  return completeness !== undefined && !completeness.isComplete && completeness.limitations.length === 0;
+}
 
-  async scan(skillDir: string): Promise<ScanResult> {
-    const { boundaries } = await findVendoredSubtreesUnder(skillDir);
-    const { stagedDir, cleanup: cleanupStage } = await stageFilteredSkillDir(
-      skillDir,
-      boundaries.map((b) => b.dir),
-    );
-
-    // A baseline is always read from the skill's OWN directory, never the staged copy --
-    // same file either way, but this keeps the lookup obvious and independent of staging.
-    const baselinePath = (await baselineExists(skillDir)) ? baselinePathFor(skillDir) : undefined;
-
+async function runOnce(skillDir: string, vendoredDirs: string[], baselinePath: string | undefined): Promise<ScanResult> {
+  const { stagedDir, cleanup: cleanupStage } = await stageFilteredSkillDir(skillDir, vendoredDirs);
+  try {
     const workDir = await mkdtemp(join(tmpdir(), "skillfn-scan-"));
     const outputPath = join(workDir, "report.json");
 
-    // Not a blanket try/finally: the "unrecognized schema" branch below deliberately
-    // keeps workDir on disk so the raw report it points to is actually inspectable —
-    // deleting it there would make that error message a lie.
+    // workDir itself is deliberately NOT covered by the outer try/finally (that only cleans
+    // the staged skill copy): the "unrecognized schema" branch below keeps workDir on disk so
+    // the raw report it points to is actually inspectable -- deleting it there would make
+    // that error message a lie.
     await runSkillSpector(stagedDir, outputPath, baselinePath);
 
     let raw: string;
@@ -260,7 +288,6 @@ export const skillSpectorScanner: Scanner = {
       raw = await readFile(outputPath, "utf8");
     } catch {
       await rm(workDir, { recursive: true, force: true });
-      await cleanupStage();
       throw new Error(
         "SkillSpector ran but produced no output file — check its version supports --format json --output.",
       );
@@ -270,7 +297,6 @@ export const skillSpectorScanner: Scanner = {
     const findingsArray = findFindingsArray(parsed);
 
     if (findingsArray === undefined) {
-      await cleanupStage();
       throw new Error(
         `SkillSpector output did not contain a recognizable findings array (looked for keys: ${FINDINGS_ARRAY_KEYS.join(", ")}). ` +
           `Raw report retained at ${outputPath} for inspection — refusing to report a false pass.`,
@@ -282,7 +308,6 @@ export const skillSpectorScanner: Scanner = {
     const suppressedCountRaw = (parsed as Record<string, unknown>).suppressed_count;
     const suppressedCount = typeof suppressedCountRaw === "number" ? suppressedCountRaw : undefined;
     await rm(workDir, { recursive: true, force: true });
-    await cleanupStage();
 
     // Prefer SkillSpector's own authoritative risk_assessment (confirmed real field,
     // accounts for suppression rules etc.) over recomputing from raw findings. Only fall
@@ -325,6 +350,43 @@ export const skillSpectorScanner: Scanner = {
       completeness,
       suppressedCount,
     };
+  } finally {
+    await cleanupStage();
+  }
+}
+
+export const skillSpectorScanner: Scanner = {
+  name: "nvidia-skillspector",
+
+  async scan(skillDir: string): Promise<ScanResult> {
+    const { boundaries } = await findVendoredSubtreesUnder(skillDir);
+    const vendoredDirs = boundaries.map((b) => b.dir);
+    // A baseline is always read from the skill's OWN directory, never the staged copy --
+    // same file either way, but this keeps the lookup obvious and independent of staging.
+    const baselinePath = (await baselineExists(skillDir)) ? baselinePathFor(skillDir) : undefined;
+
+    let result = await runOnce(skillDir, vendoredDirs, baselinePath);
+    if (!isUnexplainedIncomplete(result.completeness)) return result;
+
+    // One transparent retry on an unexplained incompleteness, before the user ever sees it
+    // -- see isUnexplainedIncomplete's reasoning. If it resolves, the user never knows this
+    // happened at all, same as a resilient HTTP client retrying a transient 5xx.
+    const retried = await runOnce(skillDir, vendoredDirs, baselinePath);
+    if (!isUnexplainedIncomplete(retried.completeness)) return retried;
+
+    // Still unexplained after a retry -- say so plainly instead of repeating the same
+    // uninformative message, so the user knows skillfn already tried the obvious fix.
+    result = retried;
+    if (result.completeness) {
+      result = {
+        ...result,
+        completeness: {
+          ...result.completeness,
+          limitations: ["SkillSpector reported incomplete analysis without explaining why, on two separate attempts"],
+        },
+      };
+    }
+    return result;
   },
 };
 

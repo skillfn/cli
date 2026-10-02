@@ -28,6 +28,16 @@ export function warn(text: string): string {
   return `${chalk.yellow("!")} ${text}`;
 }
 
+/** Deliberately not warn()'s yellow "!" -- that glyph/color is for something actionable
+ * about THIS skill (a real finding, a non-canonical filename). A scanner-side limitation
+ * (couldn't fully analyze, a tool hiccup) is a different kind of fact: not a claim about the
+ * skill, and conflating the two makes an inconclusive scan read as if it failed. Blue "ⓘ"
+ * is the calmer, neutral register major status UIs (GitHub Code Scanning, CI dashboards)
+ * reserve for "analysis incomplete" as opposed to "found a problem." */
+export function note(text: string): string {
+  return `${chalk.blue("ⓘ")} ${text}`;
+}
+
 export function dim(text: string): string {
   return chalk.dim(text);
 }
