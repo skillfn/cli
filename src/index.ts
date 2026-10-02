@@ -12,13 +12,15 @@ import { login } from "./session.js";
 import { initCommand } from "./commands/init.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { completionCommand } from "./commands/completion.js";
+import { upgradeCommand } from "./commands/upgrade.js";
+import { getInstalledVersion } from "./selfVersion.js";
 
 const program = new Command();
 
 program
   .name("skillfn")
   .description("Skillfn CLI — scan, audit, and publish AI agent skills.")
-  .version("0.2.1");
+  .version(await getInstalledVersion());
 
 program
   .command("scan <path>")
@@ -111,5 +113,11 @@ program
   .command("completion <shell>")
   .description("Print a shell completion script for bash, zsh, or fish (pipe/redirect it yourself).")
   .action(completionCommand);
+
+program
+  .command("upgrade")
+  .description("Check npm for a newer skillfn release and install it (npm install -g skillfn@latest).")
+  .option("--yes", "skip the confirmation prompt and install immediately")
+  .action(upgradeCommand);
 
 program.parseAsync(process.argv);

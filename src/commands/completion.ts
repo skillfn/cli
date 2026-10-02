@@ -7,9 +7,11 @@ const COMMANDS = [
   "login",
   "pull",
   "publish",
+  "update",
   "init",
   "doctor",
   "completion",
+  "upgrade",
 ];
 
 const BASH_SCRIPT = `_skillfn_completions() {

@@ -32,10 +32,19 @@ skillfn init
 
 ## `doctor` — diagnose common problems
 
-Checks whether `skillspector` is on PATH, whether your hub session is actually still valid (not just "a file exists"), and for any broken `skillfn link` symlinks.
+Checks whether `skillfn` itself is up to date, whether `skillspector` is on PATH, whether your hub session is actually still valid (not just "a file exists"), and for any broken `skillfn link` symlinks.
 
 ```
 skillfn doctor
+```
+
+## `upgrade` — update the CLI itself
+
+Checks npm for a newer `skillfn` release and, if one exists, runs `npm install -g skillfn@latest` for you after a confirmation prompt.
+
+```
+skillfn upgrade
+skillfn upgrade --yes   # skip the confirmation, for scripts
 ```
 
 ## `audit` — local skill hygiene

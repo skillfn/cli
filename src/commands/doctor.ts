@@ -7,6 +7,7 @@ import { loadSession, HUB_URL } from "../session.js";
 import { PLATFORMS } from "../platforms.js";
 import { offerToInstallSkillSpector, manualInstallInstructions } from "../skillSpectorInstall.js";
 import { heading, success, failure } from "../ui.js";
+import { getInstalledVersion, getLatestVersion, isNewer } from "../selfVersion.js";
 
 /**
  * `brew doctor`/`flutter doctor`-shaped diagnostics -- checks the things most likely to
@@ -67,6 +68,17 @@ interface DoctorOptions {
 
 export async function doctorCommand(options: DoctorOptions = {}): Promise<void> {
   console.log(`${heading("skillfn doctor")}\n`);
+
+  await checkLine("skillfn up to date", async () => {
+    const current = await getInstalledVersion();
+    const latest = await getLatestVersion();
+    if (!latest) return "could not reach the npm registry to check for updates -- check your network connection.";
+    if (isNewer(latest, current)) {
+      return `v${current} installed, v${latest} available -- run 'skillfn upgrade' to update.`;
+    }
+    console.log(chalk.dim(`    (v${current}, up to date)`));
+    return undefined;
+  });
 
   const hasSkillSpector = await checkLine("skillspector on PATH", async () =>
     (await isSkillSpectorInstalled())
