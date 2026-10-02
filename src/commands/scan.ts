@@ -1,7 +1,9 @@
+import chalk from "chalk";
 import { skillSpectorScanner, ScannerNotInstalledError } from "../scanner/skillSpectorScanner.js";
 import type { ScanResult } from "../scanner/types.js";
 import { toSarif } from "../sarif.js";
 import { offerToInstallSkillSpector, manualInstallInstructions, type InstallOfferContext } from "../skillSpectorInstall.js";
+import { colorSeverity, passBanner } from "../ui.js";
 
 const SEVERITY_ORDER = ["info", "low", "medium", "high", "critical"] as const;
 
@@ -38,21 +40,21 @@ export async function runScan(path: string, options: RunScanOptions = {}): Promi
 }
 
 function printTerminal(path: string, result: ScanResult): void {
-  console.log(`\nSkillfn scan — ${path}`);
-  console.log(`Scanner: ${result.scannerName}`);
-  console.log(`Risk score: ${result.riskScore}`);
-  console.log(result.passed ? "Result: PASS" : "Result: FAIL");
+  console.log(`\n${chalk.bold("Skillfn scan")} — ${chalk.dim(path)}`);
+  console.log(`${chalk.dim("Scanner:")} ${result.scannerName}`);
+  console.log(`${chalk.dim("Risk score:")} ${result.riskScore}`);
+  console.log(`${chalk.dim("Result:")} ${passBanner(result.passed)}`);
 
   if (result.findings.length === 0) {
-    console.log("\nNo findings.");
+    console.log(chalk.dim("\nNo findings."));
   } else {
     const sorted = [...result.findings].sort(
       (a, b) => SEVERITY_ORDER.indexOf(b.severity) - SEVERITY_ORDER.indexOf(a.severity),
     );
-    console.log(`\nFindings (${sorted.length}):`);
+    console.log(chalk.bold(`\nFindings (${sorted.length}):`));
     for (const f of sorted) {
       const loc = f.line ? `${f.file}:${f.line}` : f.file;
-      console.log(`  [${f.severity.toUpperCase()}] ${f.rule} (${loc})`);
+      console.log(`  ${colorSeverity(f.severity)} ${f.rule} ${chalk.dim(`(${loc})`)}`);
       console.log(`    ${f.message}`);
     }
   }

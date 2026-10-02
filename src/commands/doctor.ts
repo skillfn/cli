@@ -2,9 +2,11 @@ import { spawn } from "node:child_process";
 import { stat, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import chalk from "chalk";
 import { loadSession, HUB_URL } from "../session.js";
 import { PLATFORMS } from "../platforms.js";
 import { offerToInstallSkillSpector, manualInstallInstructions } from "../skillSpectorInstall.js";
+import { heading, success, failure } from "../ui.js";
 
 /**
  * `brew doctor`/`flutter doctor`-shaped diagnostics -- checks the things most likely to
@@ -14,10 +16,10 @@ import { offerToInstallSkillSpector, manualInstallInstructions } from "../skillS
 async function checkLine(label: string, check: () => Promise<string | undefined>): Promise<boolean> {
   const problem = await check();
   if (problem) {
-    console.log(`  ✗ ${label}: ${problem}`);
+    console.log(`  ${failure(`${label}: ${problem}`)}`);
     return false;
   }
-  console.log(`  ✓ ${label}`);
+  console.log(`  ${success(label)}`);
   return true;
 }
 
@@ -64,7 +66,7 @@ interface DoctorOptions {
 }
 
 export async function doctorCommand(options: DoctorOptions = {}): Promise<void> {
-  console.log("skillfn doctor\n");
+  console.log(`${heading("skillfn doctor")}\n`);
 
   const hasSkillSpector = await checkLine("skillspector on PATH", async () =>
     (await isSkillSpectorInstalled())
@@ -84,7 +86,7 @@ export async function doctorCommand(options: DoctorOptions = {}): Promise<void> 
       });
       if (!res.ok) return "session token is invalid or expired -- run 'skillfn login' to refresh it.";
       const data = (await res.json()) as { userName: string };
-      console.log(`    (signed in as ${data.userName})`);
+      console.log(chalk.dim(`    (signed in as ${data.userName})`));
       return undefined;
     } catch {
       return `could not reach ${HUB_URL} to verify the session -- check your network connection.`;

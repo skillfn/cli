@@ -4,6 +4,8 @@ import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import YAML from "yaml";
+import chalk from "chalk";
+import { heading, dim, success, warn } from "../ui.js";
 
 interface LocalSkill {
   name: string;
@@ -148,30 +150,33 @@ export async function auditCommand(): Promise<void> {
   const neverUsed = all.filter((s) => !usage.has(s.name));
 
   console.log(
-    `You have ${all.length} skill(s) installed (${globalSkills.length} global, ${projectSkills.length} project-local).`,
+    chalk.bold(
+      `You have ${all.length} skill(s) installed (${globalSkills.length} global, ${projectSkills.length} project-local).`,
+    ),
   );
   console.log(
-    `${neverUsed.length} have never been triggered, across ${transcripts.length} session log(s) scanned on this machine.\n`,
+    dim(
+      `${neverUsed.length} have never been triggered, across ${transcripts.length} session log(s) scanned on this machine.\n`,
+    ),
   );
 
-  console.log("Global (~/.claude/skills):");
-  if (globalSkills.length === 0) console.log("  (none)");
+  console.log(heading("Global (~/.claude/skills):"));
+  if (globalSkills.length === 0) console.log(`  ${dim("(none)")}`);
   for (const s of globalSkills) {
     const u = usage.get(s.name);
     if (!u) {
-      console.log(`  - ${s.name}: never used`);
+      console.log(`  ${warn(`${s.name}: never used`)}`);
     } else {
-      console.log(
-        `  - ${s.name}: used in ${u.usedInProjects.size} project(s), ${u.hitCount} reference(s)`,
-      );
+      console.log(`  ${success(`${s.name}: used in ${u.usedInProjects.size} project(s), ${u.hitCount} reference(s)`)}`);
     }
   }
 
-  console.log("\nProject-local (.claude/skills, this project):");
-  if (projectSkills.length === 0) console.log("  (none)");
+  console.log(`\n${heading("Project-local (.claude/skills, this project):")}`);
+  if (projectSkills.length === 0) console.log(`  ${dim("(none)")}`);
   for (const s of projectSkills) {
     const u = usage.get(s.name);
-    console.log(`  - ${s.name}: ${u ? `used, ${u.hitCount} reference(s)` : "never used"}`);
+    const line = u ? `${s.name}: used, ${u.hitCount} reference(s)` : `${s.name}: never used`;
+    console.log(`  ${u ? success(line) : warn(line)}`);
   }
 
   const pairs: Array<{ a: LocalSkill; b: LocalSkill; score: number }> = [];
@@ -185,20 +190,22 @@ export async function auditCommand(): Promise<void> {
   }
 
   if (pairs.length > 0) {
-    console.log("\nPossible duplicates (description-overlap heuristic, no AI key used):");
+    console.log(`\n${heading("Possible duplicates (description-overlap heuristic, no AI key used):")}`);
     for (const p of pairs) {
       console.log(
-        `  - "${p.a.name}" and "${p.b.name}"  (similarity ${(p.score * 100).toFixed(0)}%)`,
+        `  ${warn(`"${p.a.name}" and "${p.b.name}"  (similarity ${chalk.bold((p.score * 100).toFixed(0) + "%")})`)}`,
       );
     }
   } else {
-    console.log("\nNo likely duplicates found by the local heuristic.");
+    console.log(dim("\nNo likely duplicates found by the local heuristic."));
   }
 
   console.log(
-    "\nNote: usage detection relies on this machine's local Claude Code session logs " +
-      "(~/.claude/projects/**/*.jsonl) and only counts what's recorded there — skills used " +
-      "on another machine, or before logs were written, won't show up. Detection matches an " +
-      "exact Skill-tool invocation or the skill's exact directory path, not a bare text mention.",
+    dim(
+      "\nNote: usage detection relies on this machine's local Claude Code session logs " +
+        "(~/.claude/projects/**/*.jsonl) and only counts what's recorded there — skills used " +
+        "on another machine, or before logs were written, won't show up. Detection matches an " +
+        "exact Skill-tool invocation or the skill's exact directory path, not a bare text mention.",
+    ),
   );
 }
