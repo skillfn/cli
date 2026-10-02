@@ -8,7 +8,7 @@ import type { ScanResult } from "../scanner/types.js";
 import { toSarif } from "../sarif.js";
 import { offerToInstallSkillSpector, manualInstallInstructions, type InstallOfferContext } from "../skillSpectorInstall.js";
 import { passBanner, skillListLabel, truncateHint } from "../ui.js";
-import { findSkillsUnder, type FoundSkill, type OrphanedSkillFolder } from "../skillTreeDiscovery.js";
+import { findSkillsUnder, findVendoredSubtreesUnder, type FoundSkill, type OrphanedSkillFolder } from "../skillTreeDiscovery.js";
 import { findSkillMdFilename, offerRenameToCanonical, CANONICAL_SKILL_MD } from "../skillMdFile.js";
 import { discoverAllSkills } from "../skillDiscovery.js";
 import { runAggregateScan, buildAggregatedSkill, mergeReferenceChecks, type AggregateReport, type AggregatedReferenceCheck } from "../aggregateScan.js";
@@ -292,10 +292,34 @@ function printOrphanedFolders(orphaned: OrphanedSkillFolder[]): void {
   }
 }
 
+async function warnAboutNestedSkills(path: string): Promise<void> {
+  const { boundaries, skills } = await findVendoredSubtreesUnder(path);
+  if (boundaries.length === 0) return;
+  // The scanner itself already excludes these from this skill's own scan (see
+  // skillSpectorScanner.ts's stageFilteredSkillDir) -- this is just making that exclusion
+  // visible, since silently dropping a whole vendored repo or skill's content with no
+  // mention would be its own kind of confusing (a genuine finding in it wouldn't show up
+  // anywhere, and it's not obvious from the final report that anything was excluded at all).
+  const repoCount = boundaries.filter((b) => b.reason === "git-repo").length;
+  const skillCount = boundaries.length - repoCount;
+  const parts = [repoCount > 0 ? `${repoCount} vendored repo(s)` : null, skillCount > 0 ? `${skillCount} nested skill(s)` : null].filter(
+    (p): p is string => p !== null,
+  );
+  console.error(
+    chalk.dim(
+      `Found ${parts.join(" and ")} inside ${path} -- excluded from this skill's own scan (vendored content shouldn't be attributed to it): ${boundaries.map((b) => b.dir).join(", ")}`,
+    ),
+  );
+  if (skills.length > 0) {
+    console.error(chalk.dim(`Scan separately: ${skills.map((s) => s.dir).join(", ")}`));
+  }
+}
+
 async function resolveTargetsForPath(path: string): Promise<FoundSkill[] | "single" | undefined> {
   const directFilename = await findSkillMdFilename(path);
   if (directFilename) {
     await offerRenameToCanonical(path, directFilename);
+    await warnAboutNestedSkills(path);
     return "single";
   }
 

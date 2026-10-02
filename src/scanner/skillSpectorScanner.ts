@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, sep } from "node:path";
 import {
   type AnalysisCompleteness,
   type Finding,
@@ -11,6 +11,8 @@ import {
   computeRiskScore,
   decidePass,
 } from "./types.js";
+import { EXCLUDED_DIR_NAMES } from "../skillExclusions.js";
+import { findVendoredSubtreesUnder } from "../skillTreeDiscovery.js";
 
 /**
  * Wraps NVIDIA SkillSpector (github.com/NVIDIA/SkillSpector, Apache 2.0) — the primary
@@ -165,6 +167,33 @@ class ScannerNotInstalledError extends Error {}
  */
 const DEFAULT_WORKFLOW_SECONDS = "1800";
 
+/**
+ * Copies `skillDir` into a scratch directory with VCS/dependency internals and any nested
+ * vendored skill subtrees left out, and points SkillSpector at the copy instead of the real
+ * directory -- SkillSpector walks whatever path it's given with no exclusions of its own, so
+ * without this, scanning a skill that happens to contain a `.git` folder or a whole other
+ * skill package nested inside it reports THAT content's findings as if they belonged to the
+ * skill being scanned (confirmed real case: a vendored third-party repo's own stock git
+ * hooks -- harmless boilerplate every `git init` creates -- showed up as 14 HIGH "executable
+ * nested in a document" findings on an unrelated skill).
+ *
+ * Finding locations in SkillSpector's report are paths relative to the scanned directory, so
+ * callers that already prefix locations with the real `skillDir` (see aggregateScan.ts)
+ * don't need to know this staging happened -- the relative paths line up either way.
+ */
+async function stageFilteredSkillDir(skillDir: string, excludeDirs: string[]): Promise<{ stagedDir: string; cleanup: () => Promise<void> }> {
+  const stageRoot = await mkdtemp(join(tmpdir(), "skillfn-stage-"));
+  const stagedDir = join(stageRoot, "skill");
+  await cp(skillDir, stagedDir, {
+    recursive: true,
+    filter: (source) => {
+      if (EXCLUDED_DIR_NAMES.has(basename(source))) return false;
+      return !excludeDirs.some((dir) => source === dir || source.startsWith(`${dir}${sep}`));
+    },
+  });
+  return { stagedDir, cleanup: () => rm(stageRoot, { recursive: true, force: true }) };
+}
+
 function runSkillSpector(skillDir: string, outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -202,19 +231,26 @@ export const skillSpectorScanner: Scanner = {
   name: "nvidia-skillspector",
 
   async scan(skillDir: string): Promise<ScanResult> {
+    const { boundaries } = await findVendoredSubtreesUnder(skillDir);
+    const { stagedDir, cleanup: cleanupStage } = await stageFilteredSkillDir(
+      skillDir,
+      boundaries.map((b) => b.dir),
+    );
+
     const workDir = await mkdtemp(join(tmpdir(), "skillfn-scan-"));
     const outputPath = join(workDir, "report.json");
 
     // Not a blanket try/finally: the "unrecognized schema" branch below deliberately
     // keeps workDir on disk so the raw report it points to is actually inspectable —
     // deleting it there would make that error message a lie.
-    await runSkillSpector(skillDir, outputPath);
+    await runSkillSpector(stagedDir, outputPath);
 
     let raw: string;
     try {
       raw = await readFile(outputPath, "utf8");
     } catch {
       await rm(workDir, { recursive: true, force: true });
+      await cleanupStage();
       throw new Error(
         "SkillSpector ran but produced no output file — check its version supports --format json --output.",
       );
@@ -224,6 +260,7 @@ export const skillSpectorScanner: Scanner = {
     const findingsArray = findFindingsArray(parsed);
 
     if (findingsArray === undefined) {
+      await cleanupStage();
       throw new Error(
         `SkillSpector output did not contain a recognizable findings array (looked for keys: ${FINDINGS_ARRAY_KEYS.join(", ")}). ` +
           `Raw report retained at ${outputPath} for inspection — refusing to report a false pass.`,
@@ -233,6 +270,7 @@ export const skillSpectorScanner: Scanner = {
     const findings = findingsArray.map(mapRawFinding);
     const completeness = extractCompleteness((parsed as Record<string, unknown>).analysis_completeness);
     await rm(workDir, { recursive: true, force: true });
+    await cleanupStage();
 
     // Prefer SkillSpector's own authoritative risk_assessment (confirmed real field,
     // accounts for suppression rules etc.) over recomputing from raw findings. Only fall
