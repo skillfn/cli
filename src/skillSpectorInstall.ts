@@ -54,11 +54,20 @@ async function resolveUvCommand(): Promise<string | undefined> {
   return undefined;
 }
 
-function runCommand(cmd: string, args: string[]): Promise<boolean> {
+/**
+ * Captures stdout/stderr instead of inheriting them -- `uv`'s own install output (its
+ * progress bars, "Resolved N packages", "Downloading numpy", etc.) has its own unthemed
+ * look that clashed with skillfn's own styled terminal output. Kept (not discarded) so a
+ * real failure can still show the underlying tool's own error instead of hiding it.
+ */
+function runCommand(cmd: string, args: string[]): Promise<{ ok: boolean; output: string }> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: "inherit" });
-    child.on("error", () => resolve(false));
-    child.on("close", (code) => resolve(code === 0));
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    child.stdout?.on("data", (chunk) => (output += chunk.toString()));
+    child.stderr?.on("data", (chunk) => (output += chunk.toString()));
+    child.on("error", () => resolve({ ok: false, output }));
+    child.on("close", (code) => resolve({ ok: code === 0, output }));
   });
 }
 
@@ -84,10 +93,13 @@ export async function manualInstallInstructions(): Promise<string> {
 }
 
 async function runWithSpinner(label: string, cmd: string, args: string[]): Promise<boolean> {
-  const s = p.spinner();
+  const s = p.spinner({ indicator: "timer" });
   s.start(`Installing ${label}`);
-  const ok = await runCommand(cmd, args);
-  s.stop(ok ? `${label} installed.` : `${label} install failed -- see output above.`);
+  const { ok, output } = await runCommand(cmd, args);
+  s.stop(ok ? `${label} installed.` : `${label} install failed.`);
+  if (!ok && output.trim()) {
+    console.error(output.trim());
+  }
   return ok;
 }
 

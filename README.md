@@ -20,7 +20,10 @@ uv tool install git+https://github.com/NVIDIA/skillspector.git
 skillfn scan ./path/to/some-skill
 skillfn scan ./path/to/some-skill --format sarif   # for GitHub Code Scanning / VS Code
 skillfn scan ./path/to/some-skill --format json
+skillfn scan ./path/to/some-skill --full            # terminal output: show every finding, not just critical/high
 ```
+
+Terminal output shows every CRITICAL/HIGH finding in full but collapses MEDIUM/LOW/INFO to a count by default — scanning a large tree can return hundreds of low-signal findings that would otherwise push the ones that actually need a look off the top of your scrollback. `--full` (or `--format json`/`--format sarif`, which are always complete) shows everything.
 
 ## `init` — scaffold a new skill
 

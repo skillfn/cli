@@ -27,6 +27,7 @@ program
   .description("Run the local security scanner against a skill directory (no network required).")
   .option("--format <format>", "terminal (default), json, or sarif (for GitHub Code Scanning / VS Code)", "terminal")
   .option("--yes", "auto-accept the SkillSpector install offer if it's missing, non-interactively")
+  .option("--full", "show every finding in detail, not just critical/high (terminal format only; json/sarif are always complete)")
   .action(scanCommand);
 
 program
