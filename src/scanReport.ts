@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import chalk from "chalk";
 import type { Severity } from "./scanner/types.js";
 import type { AggregateReport, AggregatedSkill, UniqueRisk } from "./aggregateScan.js";
+import type { BrokenReason, BrokenReference, ReferenceKind } from "./brokenReferences.js";
 import { heading, dim, warn, colorSeverity } from "./ui.js";
 
 const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
@@ -33,6 +34,30 @@ const GAP = "   ";
  * (S_STEP_ACTIVE), reused here rather than a plain bullet so a skill reads as a distinct
  * top-level item in the same visual language the rest of the CLI's prompts already use. */
 const SKILL_ICON = "◆";
+
+// Display-layer cap only, like MAX_LOCATIONS_DISPLAYED -- skill.referenceCheck.broken and
+// the Markdown report always carry every entry.
+const MAX_REFERENCES_PER_GROUP = 5;
+
+const REASON_ORDER: BrokenReason[] = ["missing", "wrong-kind", "case-mismatch", "escapes-skill", "url-not-found", "url-unreachable"];
+const REASON_LABEL: Record<BrokenReason, string> = {
+  missing: "doesn't exist",
+  "wrong-kind": "wrong kind -- file vs directory",
+  "case-mismatch": "case mismatch -- breaks on case-sensitive filesystems",
+  "escapes-skill": "points outside the skill folder",
+  "url-not-found": "URL not found",
+  "url-unreachable": "URL couldn't be reached -- may be transient, or you may be offline",
+};
+const KIND_LABEL: Record<ReferenceKind, string> = {
+  "markdown-link": "markdown link",
+  "markdown-image": "markdown image",
+  "markdown-definition": "markdown link definition",
+  autolink: "autolink",
+  "inline-code": "inline code",
+  "prose-path": "prose mention",
+  "code-block-path": "code block",
+  "command-script": "script in command",
+};
 
 function treeLine(prefix: string, isLast: boolean, text: string): string {
   return `${prefix}${isLast ? LAST_BRANCH : BRANCH}${text}`;
@@ -71,6 +96,43 @@ function incompleteSummary(skill: AggregatedSkill): string {
     ? " Try SKILLSPECTOR_MAX_WORKFLOW_SECONDS=3600 (seconds) if this is a large skill."
     : "";
   return `Scan did not fully complete${pct} -- ${reason}.${seeBelow}${suggestion}`;
+}
+
+function groupBrokenReferences(refs: BrokenReference[]): Array<[BrokenReason, BrokenReference[]]> {
+  return REASON_ORDER.map((reason): [BrokenReason, BrokenReference[]] => [reason, refs.filter((r) => r.reason === reason)]).filter(
+    ([, group]) => group.length > 0,
+  );
+}
+
+/** Where a reference lives; the instance directory is only worth showing when the skill
+ * exists in more than one place (otherwise it's the same path on every line). */
+function referenceLocation(skill: AggregatedSkill, ref: BrokenReference): string {
+  const where = `${ref.file}:${ref.line}`;
+  return skill.instances.length > 1 ? `${ref.instance}/${where}` : where;
+}
+
+function referenceKindLabel(ref: BrokenReference): string {
+  return `${KIND_LABEL[ref.kind]}${ref.heuristic ? ", heuristic" : ""}`;
+}
+
+function formatReferenceTree(skill: AggregatedSkill, full: boolean, prefix: string): string[] {
+  const lines: string[] = [];
+  const groups = groupBrokenReferences(skill.referenceCheck?.broken ?? []);
+  groups.forEach(([reason, refs], gi) => {
+    const groupIsLast = gi === groups.length - 1;
+    lines.push(treeLine(prefix, groupIsLast, dim(`${REASON_LABEL[reason]} (${refs.length})`)));
+    const groupPrefix = childPrefix(prefix, groupIsLast);
+    const shown = full ? refs : refs.slice(0, MAX_REFERENCES_PER_GROUP);
+    const hidden = refs.length - shown.length;
+
+    shown.forEach((ref, ri) => {
+      const isLast = ri === shown.length - 1 && hidden === 0;
+      lines.push(treeLine(groupPrefix, isLast, `${ref.target} ${dim(`— ${referenceLocation(skill, ref)} (${referenceKindLabel(ref)})`)}`));
+      if (ref.detail) lines.push(treeLine(childPrefix(groupPrefix, isLast), true, dim(ref.detail)));
+    });
+    if (hidden > 0) lines.push(treeLine(groupPrefix, true, dim(`+${hidden} more -- rerun with --full to see them`)));
+  });
+  return lines;
 }
 
 function formatRiskTree(risks: UniqueRisk[], full: boolean, prefix: string): string[] {
@@ -144,6 +206,18 @@ export function formatSkillBlock(skill: AggregatedSkill, options: { full?: boole
     });
   }
 
+  const refCheck = skill.referenceCheck;
+  if (refCheck && refCheck.broken.length > 0) {
+    // Same demotion as scan limitations above: hygiene, not risk, so it's dim, labeled as
+    // informational, and kept out of "risk breakdown" and every severity count.
+    topLevel.push({
+      text: dim(`broken references (${refCheck.broken.length} -- informational, not security findings)`),
+      children: (prefix) => formatReferenceTree(skill, options.full ?? false, prefix),
+    });
+  } else if (refCheck) {
+    topLevel.push({ text: dim(`references: ${refCheck.referencesChecked} checked, none broken`) });
+  }
+
   topLevel.forEach((item, i) => {
     const isLast = i === topLevel.length - 1;
     lines.push(treeLine("", isLast, item.text));
@@ -166,6 +240,11 @@ export function formatSummaryBlock(report: AggregateReport): string {
     `runtime: ${formatElapsed(report.elapsedMs)}`,
     `breakdown: ${formatBreakdown(totals)}`,
   ];
+  const checked = report.skills.filter((s) => s.referenceCheck);
+  if (checked.length > 0) {
+    const brokenTotal = checked.reduce((n, s) => n + s.referenceCheck!.broken.length, 0);
+    items.push(dim(`broken references: ${brokenTotal} across ${checked.length} skill(s) checked (informational, not counted above)`));
+  }
   if (report.scanErrors > 0) {
     items.push(chalk.dim(`${report.scanErrors} instance(s) failed to scan and were skipped`));
   }
@@ -202,10 +281,14 @@ export function buildMarkdownReport(report: AggregateReport): string {
     `**Scanned:** ${report.skills.length} skill(s) across ${instanceCount} instance(s)  `,
     `**Runtime:** ${formatElapsed(report.elapsedMs)}  `,
     `**Breakdown:** ${SEVERITY_ORDER.filter((s) => totals[s]).map((s) => `${totals[s]} ${s.toUpperCase()}`).join(", ") || "none"}`,
-    "",
-    "---",
-    "",
   );
+  const checkedSkills = report.skills.filter((s) => s.referenceCheck);
+  if (checkedSkills.length > 0) {
+    const brokenTotal = checkedSkills.reduce((n, s) => n + s.referenceCheck!.broken.length, 0);
+    lines[lines.length - 1] += "  ";
+    lines.push(`**Broken references:** ${brokenTotal} across ${checkedSkills.length} skill(s) checked (informational, not counted in the breakdown above)`);
+  }
+  lines.push("", "---", "");
 
   for (const skill of report.skills) {
     lines.push(`## ${escapeMd(skill.name)}`, "");
@@ -256,6 +339,34 @@ export function buildMarkdownReport(report: AggregateReport): string {
         for (const loc of r.locations) lines.push(`  - \`${loc}\``);
       }
       lines.push("", `</details>`, "");
+    }
+
+    const refCheck = skill.referenceCheck;
+    if (refCheck) {
+      const ran = [refCheck.options.links && "local links", refCheck.options.prose && "prose & code-block paths (heuristic)", refCheck.options.urls && "external URLs"]
+        .filter(Boolean)
+        .join(", ");
+      const summary = `Checked ${refCheck.referencesChecked} reference(s) in ${refCheck.filesChecked} markdown file(s): ${ran}.`;
+      if (refCheck.broken.length === 0) {
+        lines.push(`**Reference check:** ${summary} None broken.`, "");
+      } else {
+        lines.push(
+          `<details>`,
+          `<summary>Broken references (${refCheck.broken.length}) -- <em>not security findings</em></summary>`,
+          "",
+          `_${summary} A dangling reference is a documentation/packaging problem, not evidence the skill does anything risky; it never affects the risk breakdown or pass/fail._`,
+          "",
+        );
+        for (const [reason, refs] of groupBrokenReferences(refCheck.broken)) {
+          lines.push(`**${escapeMd(REASON_LABEL[reason])}** (${refs.length})`, "");
+          for (const ref of refs) {
+            lines.push(`- \`${ref.target}\` — \`${ref.instance}/${ref.file}:${ref.line}\` (${referenceKindLabel(ref)})`);
+            if (ref.detail) lines.push(`  - ${escapeMd(ref.detail)}`);
+          }
+          lines.push("");
+        }
+        lines.push(`</details>`, "");
+      }
     }
 
     lines.push("---", "");
