@@ -41,6 +41,12 @@ program
   .option("--format <format>", "terminal (default), json, or sarif (for GitHub Code Scanning / VS Code)", "terminal")
   .option("--yes", "auto-accept the security scanner install offer if it's missing, non-interactively")
   .option("--full", "show every finding in detail, not just critical/high (terminal format only; json/sarif are always complete)")
+  .option(
+    "--check-references [level]",
+    'also report markdown links to files that don\'t exist: "links" (default) for explicit link/image syntax, "all" to add heuristic path mentions in prose and shell code blocks. Informational only -- never affects the risk score or pass/fail',
+  )
+  .option("--no-check-references", "skip the broken-references check without being asked (no interactive prompt)")
+  .option("--check-urls", "also check that external http(s) links resolve (makes network requests; informational only)")
   .action(scanCommand);
 
 program

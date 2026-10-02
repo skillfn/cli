@@ -11,7 +11,8 @@ import { passBanner, skillListLabel, truncateHint } from "../ui.js";
 import { findSkillsUnder, type FoundSkill, type OrphanedSkillFolder } from "../skillTreeDiscovery.js";
 import { findSkillMdFilename, offerRenameToCanonical, CANONICAL_SKILL_MD } from "../skillMdFile.js";
 import { discoverAllSkills } from "../skillDiscovery.js";
-import { runAggregateScan, buildAggregatedSkill, type AggregateReport } from "../aggregateScan.js";
+import { runAggregateScan, buildAggregatedSkill, mergeReferenceChecks, type AggregateReport, type AggregatedReferenceCheck } from "../aggregateScan.js";
+import { anyReferenceCheck, checkSkillReferences, NO_REFERENCE_CHECKS, type ReferenceCheckOptions } from "../brokenReferences.js";
 import { printAggregateReport, formatSkillBlock, formatSummaryBlock, writeMarkdownReport } from "../scanReport.js";
 
 export interface RunScanOptions {
@@ -95,7 +96,13 @@ async function readSkillMeta(path: string): Promise<{ name: string; description:
  * were scanned. --format json/sarif are untouched: those are the stable, already-published
  * single-skill schema other tooling (GitHub Code Scanning, scripts) depends on.
  */
-async function printSingleSkillTerminal(path: string, result: ScanResult, elapsedMs: number, options: { full?: boolean }): Promise<void> {
+async function printSingleSkillTerminal(
+  path: string,
+  result: ScanResult,
+  elapsedMs: number,
+  options: { full?: boolean },
+  referenceCheck?: AggregatedReferenceCheck,
+): Promise<void> {
   const { name, description } = await readSkillMeta(path);
   // Read fresh, after resolveTargetsForPath's rename offer already had its chance --
   // reflects whichever name is actually in effect now (renamed or left as-is).
@@ -108,6 +115,7 @@ async function printSingleSkillTerminal(path: string, result: ScanResult, elapse
     [path],
     [result.completeness],
     nonCanonical,
+    referenceCheck,
   );
   // No "Scanner: nvidia-skillspector" line here -- which engine ran is in --format json's
   // scannerName for tooling that cares, not routine terminal narration; the aggregate
@@ -120,6 +128,26 @@ interface ScanOptions {
   format?: "terminal" | "json" | "sarif";
   yes?: boolean;
   full?: boolean;
+  /** Commander's shape for `--check-references [level]` + `--no-check-references`:
+   * true (bare flag), "links" | "all", false (negated), or undefined (neither given). */
+  checkReferences?: boolean | string;
+  checkUrls?: boolean;
+  /** Resolved from the flags/prompt in scanCommand; never set by Commander itself. */
+  referenceChecks?: ReferenceCheckOptions;
+}
+
+class InvalidReferenceFlagError extends Error {}
+
+/** Spinner only when the URL check is on -- that's the one part that can take real time
+ * with nothing else on screen; the filesystem checks finish near-instantly. */
+async function runReferenceCheck(path: string, checks: ReferenceCheckOptions): Promise<AggregatedReferenceCheck> {
+  const s = checks.urls ? p.spinner({ output: process.stderr, indicator: "timer" }) : undefined;
+  s?.start("Checking references");
+  try {
+    return mergeReferenceChecks(checks, [await checkSkillReferences(path, checks)]);
+  } finally {
+    s?.stop("Checked references.");
+  }
 }
 
 async function scanSinglePath(path: string, options: ScanOptions): Promise<void> {
@@ -136,13 +164,17 @@ async function scanSinglePath(path: string, options: ScanOptions): Promise<void>
     throw err;
   }
   const format = options.format ?? "terminal";
+  const checks = options.referenceChecks ?? NO_REFERENCE_CHECKS;
+  const referenceCheck = anyReferenceCheck(checks) && format !== "sarif" ? await runReferenceCheck(path, checks) : undefined;
 
   if (format === "json") {
-    console.log(JSON.stringify(result, null, 2));
+    // Additive and absent unless asked for, so the single-skill JSON schema other tooling
+    // already consumes is unchanged by default.
+    console.log(JSON.stringify(referenceCheck ? { ...result, referenceCheck } : result, null, 2));
   } else if (format === "sarif") {
     console.log(JSON.stringify(toSarif(result), null, 2));
   } else {
-    await printSingleSkillTerminal(path, result, Date.now() - start, { full: options.full });
+    await printSingleSkillTerminal(path, result, Date.now() - start, { full: options.full }, referenceCheck);
   }
 
   process.exitCode = result.passed ? 0 : 1;
@@ -166,6 +198,7 @@ async function runAggregateFlow(skills: FoundSkill[], options: ScanOptions): Pro
   // stderr and nothing streams, keeping stdout pure JSON.
   const streaming = format === "terminal";
   const report = await runAggregateScan(skills, {
+    referenceChecks: options.referenceChecks,
     progressOutput: streaming ? process.stdout : process.stderr,
     onSkillReady: streaming ? (skill) => formatSkillBlock(skill, { full: options.full }) : undefined,
   });
@@ -324,7 +357,60 @@ async function resolveFullDetail(options: ScanOptions): Promise<boolean> {
   return !p.isCancel(choice) && choice === "full";
 }
 
+/**
+ * Turns --check-references / --no-check-references / --check-urls into the three switches.
+ * Returns undefined when none was given, meaning "ask" (see resolveReferenceChecks).
+ * `--check-references` alone means links only -- the precise tier -- and `=all` adds the
+ * heuristic prose/code-block tier; URLs are never implied by either, since they need the network.
+ */
+function referenceChecksFromFlags(options: ScanOptions): ReferenceCheckOptions | undefined {
+  if (options.checkReferences === undefined && options.checkUrls === undefined) return undefined;
+  const level = options.checkReferences;
+  if (typeof level === "string" && level !== "links" && level !== "all") {
+    throw new InvalidReferenceFlagError(`--check-references accepts "links" or "all" (got "${level}").`);
+  }
+  return {
+    links: level === true || level === "links" || level === "all",
+    prose: level === "all",
+    urls: options.checkUrls === true,
+  };
+}
+
+/**
+ * Same interactive pattern as resolveFullDetail: ask once, only when it would change
+ * anything. Off unless chosen -- this check is heuristic-prone compared to the scanner's
+ * findings, and the URL part makes network requests, so neither is ever a silent default.
+ * Scripts/CI (non-TTY) and machine-readable formats get "off" without a prompt.
+ */
+async function resolveReferenceChecks(options: ScanOptions): Promise<ReferenceCheckOptions> {
+  const fromFlags = referenceChecksFromFlags(options);
+  if (fromFlags) return fromFlags;
+  if ((options.format ?? "terminal") !== "terminal" || !process.stdin.isTTY) return NO_REFERENCE_CHECKS;
+
+  const choices = await p.multiselect({
+    message: "Extra checks? (space to toggle, enter to skip)",
+    options: [
+      { value: "links", label: "Broken local links", hint: "markdown links/images pointing at files that don't exist" },
+      { value: "prose", label: "Path mentions in prose & code blocks", hint: "heuristic -- can flag example paths" },
+      { value: "urls", label: "External URLs", hint: "makes network requests" },
+    ],
+    required: false,
+  });
+  if (p.isCancel(choices)) return NO_REFERENCE_CHECKS;
+  const picked = new Set(choices as string[]);
+  return { links: picked.has("links"), prose: picked.has("prose"), urls: picked.has("urls") };
+}
+
 export async function scanCommand(path: string | undefined, options: ScanOptions): Promise<void> {
+  try {
+    referenceChecksFromFlags(options);
+  } catch (err) {
+    if (!(err instanceof InvalidReferenceFlagError)) throw err;
+    console.error(err.message);
+    process.exitCode = 1;
+    return;
+  }
+
   let targets: { mode: "single"; path: string } | { mode: "aggregate"; skills: FoundSkill[] };
 
   if (path === undefined) {
@@ -349,7 +435,7 @@ export async function scanCommand(path: string | undefined, options: ScanOptions
     targets = resolved === "single" ? { mode: "single", path } : { mode: "aggregate", skills: resolved };
   }
 
-  const finalOptions = { ...options, full: await resolveFullDetail(options) };
+  const finalOptions = { ...options, full: await resolveFullDetail(options), referenceChecks: await resolveReferenceChecks(options) };
   if (targets.mode === "single") {
     await scanSinglePath(targets.path, finalOptions);
   } else {

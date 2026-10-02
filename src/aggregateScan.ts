@@ -3,6 +3,7 @@ import type { AnalysisCompleteness, Finding, Severity } from "./scanner/types.js
 import type { FoundSkill } from "./skillTreeDiscovery.js";
 import { ThreadedProgress } from "./threadedProgress.js";
 import { CANONICAL_SKILL_MD } from "./skillMdFile.js";
+import { anyReferenceCheck, checkSkillReferences, type BrokenReference, type ReferenceCheckOptions, type ReferenceCheckResult } from "./brokenReferences.js";
 
 export interface UniqueRisk {
   rule: string;
@@ -45,6 +46,30 @@ export interface AggregatedSkill {
    * this is only non-empty for the ones left as-is (declined, non-interactive, or the
    * rename itself failed). */
   nonCanonicalManifests: string[];
+  /** Dangling local references (and, if asked, dead URLs) in the skill's markdown. Absent
+   * when the check wasn't run -- distinct from present-with-nothing-broken, so a reader can
+   * tell "not checked" from "checked, all fine". Kept apart from severityCounts/
+   * totalFindings/uniqueRisks on purpose, same reasoning as scanLimitations: it's
+   * informational hygiene, not evidence of risk, and must never move the risk score or the
+   * pass/fail gate. */
+  referenceCheck?: AggregatedReferenceCheck;
+}
+
+/** Result of the opt-in broken-references check, merged across a skill's instances. */
+export interface AggregatedReferenceCheck {
+  options: ReferenceCheckOptions;
+  filesChecked: number;
+  referencesChecked: number;
+  broken: BrokenReference[];
+}
+
+export function mergeReferenceChecks(options: ReferenceCheckOptions, results: ReferenceCheckResult[]): AggregatedReferenceCheck {
+  return {
+    options,
+    filesChecked: results.reduce((n, r) => n + r.filesChecked, 0),
+    referencesChecked: results.reduce((n, r) => n + r.referencesChecked, 0),
+    broken: results.flatMap((r) => r.broken),
+  };
 }
 
 export interface AggregateReport {
@@ -92,6 +117,7 @@ export function buildAggregatedSkill(
   instances: string[],
   completenessList: Array<AnalysisCompleteness | undefined> = [],
   nonCanonicalManifests: string[] = [],
+  referenceCheck?: AggregatedReferenceCheck,
 ): AggregatedSkill {
   const realFindings = findings.filter((f) => !f.finding.isCoverageLimitation);
   const limitationFindings = findings.filter((f) => f.finding.isCoverageLimitation);
@@ -115,6 +141,7 @@ export function buildAggregatedSkill(
     coveragePercent: known.length > 0 ? Math.min(...known.map((c) => c.coveragePercent)) : undefined,
     incompleteReasons: [...new Set(known.flatMap((c) => c.limitations))],
     nonCanonicalManifests,
+    referenceCheck,
   };
 }
 
@@ -138,6 +165,8 @@ async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T
 
 export interface RunAggregateScanOptions {
   concurrency?: number;
+  /** Opt-in broken-references check, run per instance alongside the security scan. */
+  referenceChecks?: ReferenceCheckOptions;
   /** Where the live progress (and any streamed skill block, see onSkillReady) is drawn.
    * Defaults to stderr so --format json/sarif's stdout stays pure; the terminal-format
    * caller passes stdout instead so streamed blocks land where a human would redirect or
@@ -161,6 +190,7 @@ export interface RunAggregateScanOptions {
  */
 export async function runAggregateScan(skills: FoundSkill[], options: RunAggregateScanOptions = {}): Promise<AggregateReport> {
   const concurrency = options.concurrency ?? 4;
+  const referenceChecks = options.referenceChecks && anyReferenceCheck(options.referenceChecks) ? options.referenceChecks : undefined;
   const start = Date.now();
   const byName = new Map<
     string,
@@ -170,6 +200,7 @@ export async function runAggregateScan(skills: FoundSkill[], options: RunAggrega
       findings: Array<{ finding: Finding; dir: string }>;
       completeness: Array<AnalysisCompleteness | undefined>;
       nonCanonicalManifests: string[];
+      referenceResults: ReferenceCheckResult[];
       remaining: number;
     }
   >();
@@ -180,6 +211,7 @@ export async function runAggregateScan(skills: FoundSkill[], options: RunAggrega
       findings: [],
       completeness: [],
       nonCanonicalManifests: [],
+      referenceResults: [],
       remaining: 0,
     };
     if (skill.manifestFilename !== CANONICAL_SKILL_MD) {
@@ -199,6 +231,13 @@ export async function runAggregateScan(skills: FoundSkill[], options: RunAggrega
     progress.assign(lane, skill.name);
     let ok = true;
     const entry = byName.get(skill.name)!;
+    if (referenceChecks) {
+      try {
+        entry.referenceResults.push(await checkSkillReferences(skill.dir, referenceChecks));
+      } catch {
+        // informational check -- never let it fail the actual security scan of this skill
+      }
+    }
     try {
       const result = await skillSpectorScanner.scan(skill.dir);
       entry.instances.push(skill.dir);
@@ -218,6 +257,7 @@ export async function runAggregateScan(skills: FoundSkill[], options: RunAggrega
           entry.instances,
           entry.completeness,
           entry.nonCanonicalManifests,
+          referenceChecks ? mergeReferenceChecks(referenceChecks, entry.referenceResults) : undefined,
         );
         ready.push(built);
         const text = options.onSkillReady?.(built);
