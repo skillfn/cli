@@ -188,7 +188,19 @@ class ScannerNotInstalledError extends Error {}
  * own resource ceilings, which exist for real security reasons and aren't a bug to fix.
  * Overridable for anyone who still wants SkillSpector's own default or something longer.
  */
-const DEFAULT_WORKFLOW_SECONDS = "1800";
+const DEFAULT_WORKFLOW_SECONDS = 1800;
+
+/**
+ * Hard ceiling for skillfn's own AUTOMATIC escalation -- never exceeded regardless of how
+ * large a skill is, even if a first attempt still truncates at this value. SkillSpector's own
+ * workflow deadline is a deliberate DoS/safety boundary (its docs call out adversarial bundles
+ * at scale -- zip bombs, oversized files), so open-ended automatic escalation would quietly
+ * defeat that protection on an adversarial skill. A user who deliberately sets their own
+ * SKILLSPECTOR_MAX_WORKFLOW_SECONDS above this is respected as-is (see escalatedSeconds) --
+ * this ceiling only bounds what skillfn decides to do on its own, not what someone explicitly
+ * asked for.
+ */
+const MAX_AUTO_ESCALATED_WORKFLOW_SECONDS = 3600;
 
 /**
  * Copies `skillDir` into a scratch directory with VCS/dependency internals and any nested
@@ -217,7 +229,7 @@ async function stageFilteredSkillDir(skillDir: string, excludeDirs: string[]): P
   return { stagedDir, cleanup: () => rm(stageRoot, { recursive: true, force: true }) };
 }
 
-function runSkillSpector(skillDir: string, outputPath: string, baselinePath: string | undefined): Promise<void> {
+function runSkillSpector(skillDir: string, outputPath: string, baselinePath: string | undefined, workflowSeconds: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const args = ["scan", skillDir, "--no-llm", "--format", "json", "--output", outputPath];
     // --show-suppressed always, when a baseline applies -- cheap (doesn't affect scoring),
@@ -231,7 +243,7 @@ function runSkillSpector(skillDir: string, outputPath: string, baselinePath: str
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
-          SKILLSPECTOR_MAX_WORKFLOW_SECONDS: process.env.SKILLSPECTOR_MAX_WORKFLOW_SECONDS ?? DEFAULT_WORKFLOW_SECONDS,
+          SKILLSPECTOR_MAX_WORKFLOW_SECONDS: String(workflowSeconds),
         },
       },
     );
@@ -271,7 +283,7 @@ function isUnexplainedIncomplete(completeness: AnalysisCompleteness | undefined)
   return completeness !== undefined && !completeness.isComplete && completeness.limitations.length === 0;
 }
 
-async function runOnce(skillDir: string, vendoredDirs: string[], baselinePath: string | undefined): Promise<ScanResult> {
+async function runOnce(skillDir: string, vendoredDirs: string[], baselinePath: string | undefined, workflowSeconds: number): Promise<ScanResult> {
   const { stagedDir, cleanup: cleanupStage } = await stageFilteredSkillDir(skillDir, vendoredDirs);
   try {
     const workDir = await mkdtemp(join(tmpdir(), "skillfn-scan-"));
@@ -281,7 +293,7 @@ async function runOnce(skillDir: string, vendoredDirs: string[], baselinePath: s
     // the staged skill copy): the "unrecognized schema" branch below keeps workDir on disk so
     // the raw report it points to is actually inspectable -- deleting it there would make
     // that error message a lie.
-    await runSkillSpector(stagedDir, outputPath, baselinePath);
+    await runSkillSpector(stagedDir, outputPath, baselinePath, workflowSeconds);
 
     let raw: string;
     try {
@@ -401,6 +413,13 @@ function unionResults(first: ScanResult, retried: ScanResult): ScanResult {
   };
 }
 
+/** AE1 ("referenced artifact was not completely inspected") only ever arises from genuine
+ * content/size truncation hitting SkillSpector's own workflow deadline -- the reliable signal
+ * that more time, not a retry at the same deadline, is the thing that might actually help. */
+function hitWorkflowDeadline(result: ScanResult): boolean {
+  return result.findings.some((f) => f.isCoverageLimitation);
+}
+
 export const skillSpectorScanner: Scanner = {
   name: "nvidia-skillspector",
 
@@ -411,14 +430,28 @@ export const skillSpectorScanner: Scanner = {
     // same file either way, but this keeps the lookup obvious and independent of staging.
     const baselinePath = (await baselineExists(skillDir)) ? baselinePathFor(skillDir) : undefined;
 
-    const first = await runOnce(skillDir, vendoredDirs, baselinePath);
-    if (!isUnexplainedIncomplete(first.completeness)) return first;
+    // An explicit user override is always respected as the starting point -- never silently
+    // raised past what someone deliberately set, only ever used as-is.
+    const configuredSeconds = process.env.SKILLSPECTOR_MAX_WORKFLOW_SECONDS
+      ? Number(process.env.SKILLSPECTOR_MAX_WORKFLOW_SECONDS)
+      : DEFAULT_WORKFLOW_SECONDS;
 
-    // One transparent retry on an unexplained incompleteness, before the user ever sees it
-    // -- see isUnexplainedIncomplete's reasoning. Findings from both attempts are unioned
-    // (see unionResults), never replaced, so this can only ever surface more than the first
-    // attempt found, never less.
-    const retried = await runOnce(skillDir, vendoredDirs, baselinePath);
+    const first = await runOnce(skillDir, vendoredDirs, baselinePath, configuredSeconds);
+    const unexplained = isUnexplainedIncomplete(first.completeness);
+    // Only escalate automatically up to the hard ceiling, and only if the first attempt
+    // didn't already use at least that much -- an explicit higher value from the user is
+    // respected, not silently doubled further (see MAX_AUTO_ESCALATED_WORKFLOW_SECONDS).
+    const canEscalate = hitWorkflowDeadline(first) && configuredSeconds < MAX_AUTO_ESCALATED_WORKFLOW_SECONDS;
+    if (!unexplained && !canEscalate) return first;
+
+    // One transparent retry before the user ever sees a problem -- longer, bounded time for a
+    // genuine size/time truncation (see hitWorkflowDeadline), or the same time again for an
+    // unexplained incompleteness (see isUnexplainedIncomplete) where more time wouldn't be
+    // expected to change anything but a one-off hiccup might resolve on its own. Findings from
+    // both attempts are unioned (see unionResults), never replaced, so this can only ever
+    // surface more than the first attempt found, never less.
+    const retrySeconds = canEscalate ? Math.min(MAX_AUTO_ESCALATED_WORKFLOW_SECONDS, configuredSeconds * 2) : configuredSeconds;
+    const retried = await runOnce(skillDir, vendoredDirs, baselinePath, retrySeconds);
     return unionResults(first, retried);
   },
 };

@@ -96,8 +96,11 @@ function incompleteSummary(skill: AggregatedSkill): string {
       ? skill.incompleteReasons.map((r) => r.replace(/\.+$/, "")).join("; ")
       : "some content wasn't inspected, for an unknown reason";
   const seeBelow = skill.scanLimitations.length > 0 ? ` See "scan limitations" below.` : "";
+  // skillfn already auto-retries a genuine time/size truncation with up to 3600s (see
+  // skillSpectorScanner.ts's hitWorkflowDeadline/MAX_AUTO_ESCALATED_WORKFLOW_SECONDS) before
+  // this ever reaches the report -- seeing this means that already wasn't enough.
   const suggestion = skill.scanLimitations.length > 0
-    ? " Try SKILLSPECTOR_MAX_WORKFLOW_SECONDS=3600 (seconds) if this is a large skill."
+    ? " skillfn already retried with more time (up to 3600s) -- try an even higher SKILLSPECTOR_MAX_WORKFLOW_SECONDS yourself if this is an especially large skill."
     : skill.incompleteReasons.length === 0
       ? " Try 'skillfn scan' again -- this can be transient."
       : "";
