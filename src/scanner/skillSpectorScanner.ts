@@ -355,6 +355,52 @@ async function runOnce(skillDir: string, vendoredDirs: string[], baselinePath: s
   }
 }
 
+/** Same (rule, file, line) occurrence reported by both attempts counts once, not twice. */
+function findingKey(f: Finding): string {
+  return `${f.rule}::${f.file}::${f.line ?? ""}`;
+}
+
+/**
+ * Merges a retry's result into the first attempt's WITHOUT discarding anything the first
+ * attempt found -- a retry on a security scanner must only ever be able to ADD information
+ * (a finding either attempt surfaced), never silently drop one attempt's findings in favor of
+ * the other's. Determinism held in every case tested while building this (identical finding
+ * sets across 5 repeated runs, including ones that reproduced the unexplained-incomplete
+ * state itself), but "held in every case I happened to test" is not a guarantee, and the cost
+ * of being wrong here is a missed real finding -- the one outcome this tool exists to avoid.
+ * Recomputes passed/riskScore from the union via skillfn's own decidePass/computeRiskScore
+ * rather than trusting either attempt's own risk_assessment figure, since that number was
+ * computed by SkillSpector for its own single attempt's finding set, not this union.
+ */
+function unionResults(first: ScanResult, retried: ScanResult): ScanResult {
+  const seen = new Set<string>();
+  const findings: Finding[] = [];
+  for (const f of [...first.findings, ...retried.findings]) {
+    const key = findingKey(f);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    findings.push(f);
+  }
+
+  const stillUnexplained = isUnexplainedIncomplete(retried.completeness);
+  const completeness =
+    stillUnexplained && retried.completeness
+      ? {
+          ...retried.completeness,
+          limitations: ["SkillSpector reported incomplete analysis without explaining why, on two separate attempts"],
+        }
+      : retried.completeness;
+
+  return {
+    scannerName: skillSpectorScanner.name,
+    passed: decidePass(findings),
+    riskScore: computeRiskScore(findings),
+    findings,
+    completeness,
+    suppressedCount: Math.max(first.suppressedCount ?? 0, retried.suppressedCount ?? 0),
+  };
+}
+
 export const skillSpectorScanner: Scanner = {
   name: "nvidia-skillspector",
 
@@ -365,28 +411,15 @@ export const skillSpectorScanner: Scanner = {
     // same file either way, but this keeps the lookup obvious and independent of staging.
     const baselinePath = (await baselineExists(skillDir)) ? baselinePathFor(skillDir) : undefined;
 
-    let result = await runOnce(skillDir, vendoredDirs, baselinePath);
-    if (!isUnexplainedIncomplete(result.completeness)) return result;
+    const first = await runOnce(skillDir, vendoredDirs, baselinePath);
+    if (!isUnexplainedIncomplete(first.completeness)) return first;
 
     // One transparent retry on an unexplained incompleteness, before the user ever sees it
-    // -- see isUnexplainedIncomplete's reasoning. If it resolves, the user never knows this
-    // happened at all, same as a resilient HTTP client retrying a transient 5xx.
+    // -- see isUnexplainedIncomplete's reasoning. Findings from both attempts are unioned
+    // (see unionResults), never replaced, so this can only ever surface more than the first
+    // attempt found, never less.
     const retried = await runOnce(skillDir, vendoredDirs, baselinePath);
-    if (!isUnexplainedIncomplete(retried.completeness)) return retried;
-
-    // Still unexplained after a retry -- say so plainly instead of repeating the same
-    // uninformative message, so the user knows skillfn already tried the obvious fix.
-    result = retried;
-    if (result.completeness) {
-      result = {
-        ...result,
-        completeness: {
-          ...result.completeness,
-          limitations: ["SkillSpector reported incomplete analysis without explaining why, on two separate attempts"],
-        },
-      };
-    }
-    return result;
+    return unionResults(first, retried);
   },
 };
 
