@@ -8,8 +8,8 @@ import type { ScanResult } from "../scanner/types.js";
 import { toSarif } from "../sarif.js";
 import { offerToInstallSkillSpector, manualInstallInstructions, type InstallOfferContext } from "../skillSpectorInstall.js";
 import { passBanner, skillListLabel, truncateHint } from "../ui.js";
-import { findSkillsUnder, type FoundSkill } from "../skillTreeDiscovery.js";
-import { findSkillMdFilename } from "../skillMdFile.js";
+import { findSkillsUnder, type FoundSkill, type OrphanedSkillFolder } from "../skillTreeDiscovery.js";
+import { findSkillMdFilename, offerRenameToCanonical, CANONICAL_SKILL_MD } from "../skillMdFile.js";
 import { discoverAllSkills } from "../skillDiscovery.js";
 import { runAggregateScan, buildAggregatedSkill, type AggregateReport } from "../aggregateScan.js";
 import { printAggregateReport, formatSkillBlock, formatSummaryBlock, writeMarkdownReport } from "../scanReport.js";
@@ -97,7 +97,18 @@ async function readSkillMeta(path: string): Promise<{ name: string; description:
  */
 async function printSingleSkillTerminal(path: string, result: ScanResult, elapsedMs: number, options: { full?: boolean }): Promise<void> {
   const { name, description } = await readSkillMeta(path);
-  const skill = buildAggregatedSkill(name, description, result.findings.map((finding) => ({ finding, dir: path })), [path], [result.completeness]);
+  // Read fresh, after resolveTargetsForPath's rename offer already had its chance --
+  // reflects whichever name is actually in effect now (renamed or left as-is).
+  const currentFilename = await findSkillMdFilename(path);
+  const nonCanonical = currentFilename && currentFilename !== CANONICAL_SKILL_MD ? [`${path}/${currentFilename}`] : [];
+  const skill = buildAggregatedSkill(
+    name,
+    description,
+    result.findings.map((finding) => ({ finding, dir: path })),
+    [path],
+    [result.completeness],
+    nonCanonical,
+  );
   // No "Scanner: nvidia-skillspector" line here -- which engine ran is in --format json's
   // scannerName for tooling that cares, not routine terminal narration; the aggregate
   // report (scanReport.ts) never showed it either, so this is consistent either way.
@@ -135,10 +146,6 @@ async function scanSinglePath(path: string, options: ScanOptions): Promise<void>
   }
 
   process.exitCode = result.passed ? 0 : 1;
-}
-
-async function hasSkillMdDirectly(path: string): Promise<boolean> {
-  return (await findSkillMdFilename(path)) !== undefined;
 }
 
 async function runAggregateFlow(skills: FoundSkill[], options: ScanOptions): Promise<void> {
@@ -200,16 +207,39 @@ async function postReportMenu(report: AggregateReport): Promise<void> {
   }
 }
 
+function printOrphanedFolders(orphaned: OrphanedSkillFolder[]): void {
+  if (orphaned.length === 0) return;
+  console.error(
+    chalk.dim(
+      `${orphaned.length} folder(s) look like they might be a skill missing its manifest (heuristic -- verify manually):`,
+    ),
+  );
+  for (const o of orphaned) {
+    console.error(chalk.dim(`  - ${o.dir} (has: ${o.signals.join(", ")})`));
+  }
+}
+
 async function resolveTargetsForPath(path: string): Promise<FoundSkill[] | "single" | undefined> {
-  if (await hasSkillMdDirectly(path)) return "single";
-  const found = await findSkillsUnder(path);
+  const directFilename = await findSkillMdFilename(path);
+  if (directFilename) {
+    await offerRenameToCanonical(path, directFilename);
+    return "single";
+  }
+
+  const { skills: found, orphaned } = await findSkillsUnder(path);
   if (found.length === 0) {
     console.error(`No SKILL.md found directly in or under ${path}.`);
+    printOrphanedFolders(orphaned);
     return undefined;
   }
   // stderr, not stdout -- a diagnostic about *how* the scan was interpreted, not part of
   // the --format json/sarif machine-readable output.
   console.error(chalk.dim(`No SKILL.md directly in ${path} -- found ${found.length} skill(s) under it, scanning each individually.`));
+  printOrphanedFolders(orphaned);
+
+  for (const skill of found) {
+    skill.manifestFilename = await offerRenameToCanonical(skill.dir, skill.manifestFilename);
+  }
   return found;
 }
 
@@ -236,7 +266,14 @@ async function pickScanTargets(): Promise<{ mode: "single"; path: string } | { m
       return undefined;
     }
     if (choice === "full") {
-      return { mode: "aggregate", skills: known.map((s) => ({ name: s.name, description: s.description, dir: s.dir })) };
+      // Bulk mode: just report non-canonical filenames in the final output (see
+      // aggregateScan.ts's nonCanonicalManifests) rather than interactively asking about
+      // each one -- a serial confirm-per-skill tax doesn't make sense across potentially
+      // dozens of skills the user didn't individually pick.
+      return {
+        mode: "aggregate",
+        skills: known.map((s) => ({ name: s.name, description: s.description, dir: s.dir, manifestFilename: s.manifestFilename })),
+      };
     }
     const picked = await p.multiselect({
       message: "Which skill(s)?",
@@ -249,7 +286,14 @@ async function pickScanTargets(): Promise<{ mode: "single"; path: string } | { m
     });
     if (p.isCancel(picked)) return undefined;
     const chosenDirs = new Set(picked as string[]);
-    return { mode: "aggregate", skills: known.filter((s) => chosenDirs.has(s.dir)).map((s) => ({ name: s.name, description: s.description, dir: s.dir })) };
+    const chosen = known.filter((s) => chosenDirs.has(s.dir));
+    for (const s of chosen) {
+      s.manifestFilename = await offerRenameToCanonical(s.dir, s.manifestFilename);
+    }
+    return {
+      mode: "aggregate",
+      skills: chosen.map((s) => ({ name: s.name, description: s.description, dir: s.dir, manifestFilename: s.manifestFilename })),
+    };
   }
 
   // choice === "path"

@@ -114,6 +114,9 @@ export function formatSkillBlock(skill: AggregatedSkill, options: { full?: boole
   if (skill.incomplete) {
     lines.push(warn(incompleteSummary(skill)));
   }
+  for (const path of skill.nonCanonicalManifests) {
+    lines.push(warn(`${path} isn't named exactly "SKILL.md" -- some tools on a case-sensitive filesystem won't find it. Rename it to fix.`));
+  }
 
   const topLevel: Array<{ text: string; children?: (prefix: string) => string[] }> = [];
   if (skill.description) topLevel.push({ text: chalk.dim(skill.description) });
@@ -208,6 +211,12 @@ export function buildMarkdownReport(report: AggregateReport): string {
     lines.push(`## ${escapeMd(skill.name)}`, "");
     if (skill.incomplete) {
       lines.push(`> ⚠️ ${escapeMd(incompleteSummary(skill))}`, "");
+    }
+    for (const path of skill.nonCanonicalManifests) {
+      lines.push(
+        `> ⚠️ \`${path}\` isn't named exactly \`SKILL.md\` -- some tools on a case-sensitive filesystem won't find it. Rename it to fix.`,
+        "",
+      );
     }
     if (skill.description) lines.push(`${escapeMd(skill.description)}`, "");
     lines.push(`**Used in ${skill.instances.length} instance(s):**`);

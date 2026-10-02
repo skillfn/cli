@@ -10,6 +10,7 @@ export interface DiscoveredSkill {
   dir: string;
   platform: PlatformInfo;
   scope: "global" | "project";
+  manifestFilename: string;
 }
 
 async function dirExists(path: string): Promise<boolean> {
@@ -44,6 +45,7 @@ async function loadSkillsFrom(
         dir,
         platform,
         scope,
+        manifestFilename: skillMdName,
       });
     } catch {
       continue;

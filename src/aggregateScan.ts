@@ -2,6 +2,7 @@ import { skillSpectorScanner } from "./scanner/skillSpectorScanner.js";
 import type { AnalysisCompleteness, Finding, Severity } from "./scanner/types.js";
 import type { FoundSkill } from "./skillTreeDiscovery.js";
 import { ThreadedProgress } from "./threadedProgress.js";
+import { CANONICAL_SKILL_MD } from "./skillMdFile.js";
 
 export interface UniqueRisk {
   rule: string;
@@ -38,6 +39,12 @@ export interface AggregatedSkill {
    * instead of a guessed, possibly-wrong generic explanation (coveragePercent alone can't
    * tell "a file was too big to read" apart from "an external network call failed"). */
   incompleteReasons: string[];
+  /** Full paths where the manifest exists but isn't spelled exactly "SKILL.md" (case
+   * matters on a case-sensitive filesystem) -- callers get the chance to offer an
+   * interactive rename at discovery time (see skillMdFile.ts's offerRenameToCanonical);
+   * this is only non-empty for the ones left as-is (declined, non-interactive, or the
+   * rename itself failed). */
+  nonCanonicalManifests: string[];
 }
 
 export interface AggregateReport {
@@ -84,6 +91,7 @@ export function buildAggregatedSkill(
   findings: Array<{ finding: Finding; dir: string }>,
   instances: string[],
   completenessList: Array<AnalysisCompleteness | undefined> = [],
+  nonCanonicalManifests: string[] = [],
 ): AggregatedSkill {
   const realFindings = findings.filter((f) => !f.finding.isCoverageLimitation);
   const limitationFindings = findings.filter((f) => f.finding.isCoverageLimitation);
@@ -106,6 +114,7 @@ export function buildAggregatedSkill(
     incomplete: known.some((c) => !c.isComplete),
     coveragePercent: known.length > 0 ? Math.min(...known.map((c) => c.coveragePercent)) : undefined,
     incompleteReasons: [...new Set(known.flatMap((c) => c.limitations))],
+    nonCanonicalManifests,
   };
 }
 
@@ -160,11 +169,22 @@ export async function runAggregateScan(skills: FoundSkill[], options: RunAggrega
       instances: string[];
       findings: Array<{ finding: Finding; dir: string }>;
       completeness: Array<AnalysisCompleteness | undefined>;
+      nonCanonicalManifests: string[];
       remaining: number;
     }
   >();
   for (const skill of skills) {
-    const entry = byName.get(skill.name) ?? { description: skill.description, instances: [], findings: [], completeness: [], remaining: 0 };
+    const entry = byName.get(skill.name) ?? {
+      description: skill.description,
+      instances: [],
+      findings: [],
+      completeness: [],
+      nonCanonicalManifests: [],
+      remaining: 0,
+    };
+    if (skill.manifestFilename !== CANONICAL_SKILL_MD) {
+      entry.nonCanonicalManifests.push(`${skill.dir}/${skill.manifestFilename}`);
+    }
     entry.remaining++;
     byName.set(skill.name, entry);
   }
@@ -191,7 +211,14 @@ export async function runAggregateScan(skills: FoundSkill[], options: RunAggrega
       progress.complete(lane, ok);
       entry.remaining--;
       if (entry.remaining === 0) {
-        const built = buildAggregatedSkill(skill.name, entry.description, entry.findings, entry.instances, entry.completeness);
+        const built = buildAggregatedSkill(
+          skill.name,
+          entry.description,
+          entry.findings,
+          entry.instances,
+          entry.completeness,
+          entry.nonCanonicalManifests,
+        );
         ready.push(built);
         const text = options.onSkillReady?.(built);
         if (text) progress.print(text);
