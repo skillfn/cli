@@ -4,6 +4,10 @@ export interface Finding {
   rule: string;
   severity: Severity;
   message: string;
+  /** Kept separate from `message` (SkillSpector reports them as distinct fields) so
+   * terminal/Markdown output can render it as its own sub-line/section instead of one
+   * run-on sentence. */
+  remediation?: string;
   file: string;
   line?: number;
   /** Mapping to a public taxonomy (OWASP Agentic AI Top 10 / MITRE ATLAS), filled in as rules mature. */

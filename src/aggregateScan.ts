@@ -7,6 +7,7 @@ export interface UniqueRisk {
   rule: string;
   severity: Severity;
   message: string;
+  remediation?: string;
   count: number;
   locations: string[]; // "dir/file:line", capped
 }
@@ -53,7 +54,14 @@ export function buildAggregatedSkill(
       existing.count++;
       if (existing.locations.length < MAX_LOCATIONS_SHOWN) existing.locations.push(loc);
     } else {
-      uniqueMap.set(key, { rule: finding.rule, severity: finding.severity, message: finding.message, count: 1, locations: [loc] });
+      uniqueMap.set(key, {
+        rule: finding.rule,
+        severity: finding.severity,
+        message: finding.message,
+        remediation: finding.remediation,
+        count: 1,
+        locations: [loc],
+      });
     }
   }
   const uniqueRisks = [...uniqueMap.values()].sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]);

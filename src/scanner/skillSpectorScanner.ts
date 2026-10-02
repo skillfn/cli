@@ -101,11 +101,11 @@ function extractLocation(raw: Record<string, unknown>): { file: string; line?: n
 function mapRawFinding(raw: Record<string, unknown>): Finding {
   const { file, line } = extractLocation(raw);
   const message = String(firstDefined(raw, MESSAGE_KEYS) ?? "SkillSpector finding (no message field recognized).");
-  const remediation = raw.remediation;
   return {
     rule: String(firstDefined(raw, RULE_KEYS) ?? "skillspector-finding"),
     severity: normalizeSeverity(firstDefined(raw, SEVERITY_KEYS)),
-    message: remediation ? `${message} Remediation: ${String(remediation)}` : message,
+    message,
+    remediation: raw.remediation !== undefined && raw.remediation !== null ? String(raw.remediation) : undefined,
     file,
     line,
     taxonomy: firstDefined(raw, CATEGORY_KEYS) as string | undefined,

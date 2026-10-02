@@ -36,7 +36,10 @@ export function toSarif(result: ScanResult): object {
         results: result.findings.map((f) => ({
           ruleId: f.rule,
           level: severityToSarifLevel(f.severity),
-          message: { text: f.message },
+          // SARIF's message is one flat text field (no separate remediation slot GitHub's
+          // UI surfaces by default), so remediation is appended here -- the structured
+          // split (Finding.remediation) is for our own terminal/Markdown/JSON output.
+          message: { text: f.remediation ? `${f.message}\n\nRemediation: ${f.remediation}` : f.message },
           locations: [
             {
               physicalLocation: {
