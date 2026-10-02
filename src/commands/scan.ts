@@ -31,15 +31,18 @@ export class SkillSpectorRequiredError extends Error {}
  */
 async function scanWithSpinner(path: string): Promise<ScanResult> {
   const s = p.spinner({ output: process.stderr, indicator: "timer" });
-  s.start("Scanning with SkillSpector");
+  s.start("Scanning with skillfn");
   try {
     const result = await skillSpectorScanner.scan(path);
     s.stop("Scan complete.");
     return result;
   } catch (err) {
     // ScannerNotInstalledError isn't a failed scan -- it's the normal "not set up yet"
-    // path the caller handles next (offering to install), so don't frame it as one.
-    s.error(err instanceof ScannerNotInstalledError ? "SkillSpector isn't installed." : "Scan failed.");
+    // path the caller handles next (offering to install), so don't frame it as one. Kept
+    // generic here (the underlying scanner's exact name only matters once we're actually
+    // telling the user what to install, a few lines down) -- the routine narration a user
+    // sees on every scan should say skillfn, not repeat a dependency's name every time.
+    s.error(err instanceof ScannerNotInstalledError ? "Security scanner isn't installed." : "Scan failed.");
     throw err;
   }
 }
@@ -92,7 +95,10 @@ async function readSkillMeta(path: string): Promise<{ name: string; description:
 async function printSingleSkillTerminal(path: string, result: ScanResult, elapsedMs: number, options: { full?: boolean }): Promise<void> {
   const { name, description } = await readSkillMeta(path);
   const skill = buildAggregatedSkill(name, description, result.findings.map((finding) => ({ finding, dir: path })), [path]);
-  console.log(`\n${chalk.dim("Scanner:")} ${result.scannerName}    ${chalk.dim("Risk score:")} ${result.riskScore}    ${chalk.dim("Result:")} ${passBanner(result.passed)}`);
+  // No "Scanner: nvidia-skillspector" line here -- which engine ran is in --format json's
+  // scannerName for tooling that cares, not routine terminal narration; the aggregate
+  // report (scanReport.ts) never showed it either, so this is consistent either way.
+  console.log(`\n${chalk.dim("Risk score:")} ${result.riskScore}    ${chalk.dim("Result:")} ${passBanner(result.passed)}`);
   printAggregateReport({ skills: [skill], totalInstancesScanned: 1, scanErrors: 0, elapsedMs }, options);
 }
 

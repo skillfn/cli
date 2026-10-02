@@ -12,6 +12,7 @@ const COMMANDS = [
   "doctor",
   "completion",
   "upgrade",
+  "version",
 ];
 
 const BASH_SCRIPT = `_skillfn_completions() {

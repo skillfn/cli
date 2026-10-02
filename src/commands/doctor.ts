@@ -80,7 +80,7 @@ export async function doctorCommand(options: DoctorOptions = {}): Promise<void> 
     return undefined;
   });
 
-  const hasSkillSpector = await checkLine("skillspector on PATH", async () =>
+  const hasSkillSpector = await checkLine("security scanner installed", async () =>
     (await isSkillSpectorInstalled())
       ? undefined
       : `required, not found. Install:\n      ${(await manualInstallInstructions()).replace(/\n/g, "\n      ")}`,
