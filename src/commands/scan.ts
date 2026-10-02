@@ -7,7 +7,7 @@ import { skillSpectorScanner, ScannerNotInstalledError } from "../scanner/skillS
 import type { ScanResult } from "../scanner/types.js";
 import { toSarif } from "../sarif.js";
 import { offerToInstallSkillSpector, manualInstallInstructions, type InstallOfferContext } from "../skillSpectorInstall.js";
-import { passBanner } from "../ui.js";
+import { passBanner, skillListLabel, truncateHint } from "../ui.js";
 import { findSkillsUnder, type FoundSkill } from "../skillTreeDiscovery.js";
 import { discoverAllSkills } from "../skillDiscovery.js";
 import { runAggregateScan, buildAggregatedSkill, type AggregateReport } from "../aggregateScan.js";
@@ -242,7 +242,11 @@ async function pickScanTargets(): Promise<{ mode: "single"; path: string } | { m
     }
     const picked = await p.multiselect({
       message: "Which skill(s)?",
-      options: known.map((s) => ({ value: s.dir, label: `${s.name} (${s.platform.label})`, hint: s.description || undefined })),
+      options: known.map((s) => ({
+        value: s.dir,
+        label: skillListLabel(s.name, s.platform.label),
+        hint: s.description ? truncateHint(s.description) : undefined,
+      })),
       required: true,
     });
     if (p.isCancel(picked)) return undefined;

@@ -47,3 +47,21 @@ export function colorSeverity(severity: Severity): string {
 export function passBanner(passed: boolean): string {
   return passed ? chalk.bgGreen.black.bold(" PASS ") : chalk.bgRed.white.bold(" FAIL ");
 }
+
+/**
+ * A SKILL.md `description` is written for an LLM deciding when to trigger the skill, not
+ * for a human skimming a single-line interactive list -- it's routinely a full paragraph.
+ * Dropped straight into a @clack/prompts hint unbounded, it wraps across many lines and
+ * swamps every other (short, one-line) item around it, which is what actually made a list
+ * of installed skills read as a cluttered log rather than a menu. Always truncate.
+ */
+export function truncateHint(text: string, max = 70): string {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max - 1).trimEnd()}…`;
+}
+
+/** Skill name as the primary/bright text, platform demoted to a dim suffix -- so the thing
+ * you're actually choosing between (which skill) reads first, not which platform it's on. */
+export function skillListLabel(name: string, platformLabel: string): string {
+  return `${name} ${chalk.dim(`(${platformLabel})`)}`;
+}

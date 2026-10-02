@@ -5,6 +5,7 @@ import * as p from "@clack/prompts";
 import { discoverAllSkills, type DiscoveredSkill } from "../skillDiscovery.js";
 import { PLATFORMS, findPlatform, type PlatformInfo } from "../platforms.js";
 import { sniffCapabilities } from "../capabilitySignals.js";
+import { skillListLabel, truncateHint } from "../ui.js";
 
 interface LinkOptions {
   to?: string;
@@ -29,8 +30,8 @@ async function pickSourceInteractively(all: DiscoveredSkill[]): Promise<Discover
     message: "Which skill do you want to link to another platform?",
     options: unique.map((s) => ({
       value: s.name,
-      label: `${s.name} (${s.platform.label})`,
-      hint: s.description || undefined,
+      label: skillListLabel(s.name, s.platform.label),
+      hint: s.description ? truncateHint(s.description) : undefined,
     })),
   });
   if (p.isCancel(choice)) return undefined;
