@@ -13,6 +13,7 @@ import { initCommand } from "./commands/init.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { completionCommand } from "./commands/completion.js";
 import { upgradeCommand } from "./commands/upgrade.js";
+import { menuCommand } from "./commands/menu.js";
 import { getInstalledVersion } from "./selfVersion.js";
 
 const program = new Command();
@@ -133,4 +134,16 @@ program
   .option("--yes", "skip the confirmation prompt and install immediately")
   .action(upgradeCommand);
 
-program.parseAsync(process.argv);
+program
+  .command("menu")
+  .description("Interactive menu over the commands above -- same thing as running 'skillfn' with no arguments.")
+  .action(menuCommand);
+
+// Bare `skillfn`, no subcommand -- show the interactive menu instead of commander's default
+// help text (menuCommand itself falls back gracefully when there's no TTY to prompt from).
+// Anything with an actual subcommand/flag (including -h/-V) goes through normal parsing.
+if (process.argv.length <= 2) {
+  await menuCommand();
+} else {
+  program.parseAsync(process.argv);
+}
