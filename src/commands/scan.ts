@@ -94,7 +94,7 @@ async function readSkillMeta(path: string): Promise<{ name: string; description:
  */
 async function printSingleSkillTerminal(path: string, result: ScanResult, elapsedMs: number, options: { full?: boolean }): Promise<void> {
   const { name, description } = await readSkillMeta(path);
-  const skill = buildAggregatedSkill(name, description, result.findings.map((finding) => ({ finding, dir: path })), [path]);
+  const skill = buildAggregatedSkill(name, description, result.findings.map((finding) => ({ finding, dir: path })), [path], [result.completeness]);
   // No "Scanner: nvidia-skillspector" line here -- which engine ran is in --format json's
   // scannerName for tooling that cares, not routine terminal narration; the aggregate
   // report (scanReport.ts) never showed it either, so this is consistent either way.

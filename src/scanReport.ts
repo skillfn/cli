@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import chalk from "chalk";
 import type { Severity } from "./scanner/types.js";
 import type { AggregateReport, AggregatedSkill, UniqueRisk } from "./aggregateScan.js";
-import { heading, dim, colorSeverity } from "./ui.js";
+import { heading, dim, warn, colorSeverity } from "./ui.js";
 
 const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
 const ALWAYS_DETAILED: ReadonlySet<Severity> = new Set(["critical", "high"]);
@@ -80,6 +80,15 @@ function formatRiskTree(risks: UniqueRisk[], full: boolean, prefix: string): str
  * per-skill streaming (aggregateScan.ts's onSkillReady), so both render identically. */
 export function formatSkillBlock(skill: AggregatedSkill, options: { full?: boolean } = {}): string {
   const lines: string[] = [heading(skill.name)];
+  if (skill.incomplete) {
+    const pct = skill.coveragePercent !== undefined ? ` (${skill.coveragePercent.toFixed(0)}% coverage)` : "";
+    lines.push(
+      warn(
+        `Scan did not fully complete${pct} -- some content wasn't inspected. See "scan limitations" below. ` +
+          `Try SKILLSPECTOR_MAX_WORKFLOW_SECONDS=3600 if this is a large skill.`,
+      ),
+    );
+  }
 
   const topLevel: Array<{ text: string; children?: (prefix: string) => string[] }> = [];
   if (skill.description) topLevel.push({ text: chalk.dim(skill.description) });
@@ -172,6 +181,14 @@ export function buildMarkdownReport(report: AggregateReport): string {
 
   for (const skill of report.skills) {
     lines.push(`## ${escapeMd(skill.name)}`, "");
+    if (skill.incomplete) {
+      const pct = skill.coveragePercent !== undefined ? ` (${skill.coveragePercent.toFixed(0)}% coverage)` : "";
+      lines.push(
+        `> ⚠️ **Scan did not fully complete${pct}** -- some content wasn't inspected. See "Scan limitations" below. ` +
+          `Try \`SKILLSPECTOR_MAX_WORKFLOW_SECONDS=3600\` if this is a large skill.`,
+        "",
+      );
+    }
     if (skill.description) lines.push(`${escapeMd(skill.description)}`, "");
     lines.push(`**Used in ${skill.instances.length} instance(s):**`);
     for (const dir of skill.instances) lines.push(`- \`${dir}\``);

@@ -1,5 +1,5 @@
 import { skillSpectorScanner } from "./scanner/skillSpectorScanner.js";
-import type { Finding, Severity } from "./scanner/types.js";
+import type { AnalysisCompleteness, Finding, Severity } from "./scanner/types.js";
 import type { FoundSkill } from "./skillTreeDiscovery.js";
 import { ThreadedProgress } from "./threadedProgress.js";
 
@@ -28,6 +28,12 @@ export interface AggregatedSkill {
    * inflates the severity breakdown and can wrongly fail the security gate (confirmed real
    * case: 24 of these alone pushed a skill to "44 HIGH" with only 20 genuine findings). */
   scanLimitations: UniqueRisk[];
+  /** True if ANY instance's scan didn't fully complete (SkillSpector's own authoritative
+   * analysis_completeness.is_complete, not inferred from scanLimitations) -- the explicit
+   * "should I trust this result as the whole picture" signal. coveragePercent is the worst
+   * (lowest) across instances; undefined when no scanner reported completeness at all. */
+  incomplete: boolean;
+  coveragePercent?: number;
 }
 
 export interface AggregateReport {
@@ -73,6 +79,7 @@ export function buildAggregatedSkill(
   description: string,
   findings: Array<{ finding: Finding; dir: string }>,
   instances: string[],
+  completenessList: Array<AnalysisCompleteness | undefined> = [],
 ): AggregatedSkill {
   const realFindings = findings.filter((f) => !f.finding.isCoverageLimitation);
   const limitationFindings = findings.filter((f) => f.finding.isCoverageLimitation);
@@ -82,6 +89,8 @@ export function buildAggregatedSkill(
     severityCounts[finding.severity] = (severityCounts[finding.severity] ?? 0) + 1;
   }
 
+  const known = completenessList.filter((c): c is AnalysisCompleteness => c !== undefined);
+
   return {
     name,
     description,
@@ -90,6 +99,8 @@ export function buildAggregatedSkill(
     totalFindings: realFindings.length,
     uniqueRisks: dedupeIntoRisks(realFindings),
     scanLimitations: dedupeIntoRisks(limitationFindings),
+    incomplete: known.some((c) => !c.isComplete),
+    coveragePercent: known.length > 0 ? Math.min(...known.map((c) => c.coveragePercent)) : undefined,
   };
 }
 
@@ -139,10 +150,16 @@ export async function runAggregateScan(skills: FoundSkill[], options: RunAggrega
   const start = Date.now();
   const byName = new Map<
     string,
-    { description: string; instances: string[]; findings: Array<{ finding: Finding; dir: string }>; remaining: number }
+    {
+      description: string;
+      instances: string[];
+      findings: Array<{ finding: Finding; dir: string }>;
+      completeness: Array<AnalysisCompleteness | undefined>;
+      remaining: number;
+    }
   >();
   for (const skill of skills) {
-    const entry = byName.get(skill.name) ?? { description: skill.description, instances: [], findings: [], remaining: 0 };
+    const entry = byName.get(skill.name) ?? { description: skill.description, instances: [], findings: [], completeness: [], remaining: 0 };
     entry.remaining++;
     byName.set(skill.name, entry);
   }
@@ -160,6 +177,7 @@ export async function runAggregateScan(skills: FoundSkill[], options: RunAggrega
     try {
       const result = await skillSpectorScanner.scan(skill.dir);
       entry.instances.push(skill.dir);
+      entry.completeness.push(result.completeness);
       for (const finding of result.findings) entry.findings.push({ finding, dir: skill.dir });
     } catch {
       ok = false;
@@ -168,7 +186,7 @@ export async function runAggregateScan(skills: FoundSkill[], options: RunAggrega
       progress.complete(lane, ok);
       entry.remaining--;
       if (entry.remaining === 0) {
-        const built = buildAggregatedSkill(skill.name, entry.description, entry.findings, entry.instances);
+        const built = buildAggregatedSkill(skill.name, entry.description, entry.findings, entry.instances, entry.completeness);
         ready.push(built);
         const text = options.onSkillReady?.(built);
         if (text) progress.print(text);

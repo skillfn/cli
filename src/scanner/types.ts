@@ -24,11 +24,28 @@ export interface Finding {
   isCoverageLimitation?: boolean;
 }
 
+/**
+ * SkillSpector's own `analysis_completeness` projection (confirmed field, see
+ * inspection_ledger.py's AnalysisCompleteness) -- an explicit, authoritative signal for
+ * "did the scan actually finish," instead of a human having to infer it by eyeballing
+ * AE1/coverage-limitation finding counts. Optional because other scanners (the pluggable
+ * Scanner interface) have no equivalent concept to report.
+ */
+export interface AnalysisCompleteness {
+  isComplete: boolean;
+  status: string;
+  coveragePercent: number;
+  fullyInspectedFiles: number;
+  partiallyInspectedFiles: number;
+  entirelyUninspectedFiles: number;
+}
+
 export interface ScanResult {
   scannerName: string;
   passed: boolean;
   riskScore: number;
   findings: Finding[];
+  completeness?: AnalysisCompleteness;
 }
 
 /**

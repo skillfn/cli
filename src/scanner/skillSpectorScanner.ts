@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type AnalysisCompleteness,
   type Finding,
   type Scanner,
   type ScanResult,
@@ -124,15 +125,57 @@ function mapRawFinding(raw: Record<string, unknown>): Finding {
   };
 }
 
+/**
+ * SkillSpector's own authoritative completeness signal (confirmed field, see
+ * inspection_ledger.py's AnalysisCompleteness) -- an explicit "did the scan actually
+ * finish," rather than leaving it to be inferred indirectly from AE1-style finding counts.
+ * Tolerant of a missing/malformed field (older SkillSpector versions, or another scanner
+ * behind the same interface someday): completeness is just omitted, not fabricated.
+ */
+function extractCompleteness(raw: unknown): AnalysisCompleteness | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const c = raw as Record<string, unknown>;
+  if (typeof c.is_complete !== "boolean") return undefined;
+  return {
+    isComplete: c.is_complete,
+    status: typeof c.status === "string" ? c.status : c.is_complete ? "complete" : "partial",
+    coveragePercent: typeof c.coverage_percent === "number" ? c.coverage_percent : 0,
+    fullyInspectedFiles: typeof c.fully_inspected_files === "number" ? c.fully_inspected_files : 0,
+    partiallyInspectedFiles: typeof c.partially_inspected_files === "number" ? c.partially_inspected_files : 0,
+    entirelyUninspectedFiles: typeof c.entirely_uninspected_files === "number" ? c.entirely_uninspected_files : 0,
+  };
+}
+
 /** Distinguishes "binary not on PATH" from any other spawn/exit outcome — see the exit-code note below. */
 class ScannerNotInstalledError extends Error {}
+
+/**
+ * SkillSpector's own default aggregate-workflow deadline is 600s (confirmed from its source
+ * and docs/ANALYSIS_RESOURCE_BOUNDS.md) -- a safety ceiling against adversarial bundles at
+ * scale (zip bombs, oversized files), not a limit relevant to skillfn's actual use case: one
+ * local, user-owned skill directory, scanned one at a time. Hitting that deadline mid-scan is
+ * exactly what produces a flood of "AE1: referenced artifact was not completely inspected"
+ * findings (confirmed real case: a 10m19s scan, just past the 600s/10min default, on a skill
+ * with a large adapters/examples/references tree). Raised here via the documented
+ * SKILLSPECTOR_MAX_WORKFLOW_SECONDS env var (read once at process start, so this must be set
+ * before spawning, not after) rather than attempting to patch or route around SkillSpector's
+ * own resource ceilings, which exist for real security reasons and aren't a bug to fix.
+ * Overridable for anyone who still wants SkillSpector's own default or something longer.
+ */
+const DEFAULT_WORKFLOW_SECONDS = "1800";
 
 function runSkillSpector(skillDir: string, outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       "skillspector",
       ["scan", skillDir, "--no-llm", "--format", "json", "--output", outputPath],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          SKILLSPECTOR_MAX_WORKFLOW_SECONDS: process.env.SKILLSPECTOR_MAX_WORKFLOW_SECONDS ?? DEFAULT_WORKFLOW_SECONDS,
+        },
+      },
     );
 
     let stderr = "";
@@ -187,6 +230,7 @@ export const skillSpectorScanner: Scanner = {
     }
 
     const findings = findingsArray.map(mapRawFinding);
+    const completeness = extractCompleteness((parsed as Record<string, unknown>).analysis_completeness);
     await rm(workDir, { recursive: true, force: true });
 
     // Prefer SkillSpector's own authoritative risk_assessment (confirmed real field,
@@ -217,6 +261,7 @@ export const skillSpectorScanner: Scanner = {
         passed: !reportedFailure || !hasGenuineHighOrCritical,
         riskScore: ra.score as number,
         findings,
+        completeness,
       };
     }
 
@@ -225,6 +270,7 @@ export const skillSpectorScanner: Scanner = {
       passed: decidePass(findings),
       riskScore: computeRiskScore(findings),
       findings,
+      completeness,
     };
   },
 };
