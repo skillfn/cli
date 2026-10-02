@@ -1,6 +1,6 @@
 {
   "name": "skillfn",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Scan, sign, and publish AI agent skills (SKILL.md) with a real security gate, persistent identity, and lineage tracking — works with any SKILL.md-compatible agent.",
   "keywords": [
     "skill",
