@@ -12,6 +12,16 @@ export interface Finding {
   line?: number;
   /** Mapping to a public taxonomy (OWASP Agentic AI Top 10 / MITRE ATLAS), filled in as rules mature. */
   taxonomy?: string;
+  /**
+   * True for a finding that reports the SCANNER's own inability to fully inspect
+   * something (e.g. SkillSpector's "AE1: referenced artifact was not completely
+   * inspected" when a file exceeds its analysis size/bounds) -- not a claim that the
+   * skill IS doing something risky. Confirmed from a real scan where this showed up tagged
+   * "high" severity and would otherwise have failed the gate and inflated the severity
+   * breakdown purely because the scanner hit a size limit, with zero evidence of anything
+   * malicious. Excluded from decidePass/computeRiskScore and reported separately.
+   */
+  isCoverageLimitation?: boolean;
 }
 
 export interface ScanResult {
@@ -40,11 +50,13 @@ export const SEVERITY_WEIGHT: Record<Severity, number> = {
   critical: 15,
 };
 
-/** A skill fails the gate if any finding is high/critical. */
+/** A skill fails the gate if any finding is high/critical -- a coverage-limitation finding
+ * (the scanner couldn't fully inspect something) is never grounds for failing on its own,
+ * since it isn't evidence the skill is doing anything risky. */
 export function decidePass(findings: Finding[]): boolean {
-  return !findings.some((f) => f.severity === "high" || f.severity === "critical");
+  return !findings.some((f) => !f.isCoverageLimitation && (f.severity === "high" || f.severity === "critical"));
 }
 
 export function computeRiskScore(findings: Finding[]): number {
-  return findings.reduce((sum, f) => sum + SEVERITY_WEIGHT[f.severity], 0);
+  return findings.filter((f) => !f.isCoverageLimitation).reduce((sum, f) => sum + SEVERITY_WEIGHT[f.severity], 0);
 }

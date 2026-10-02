@@ -45,6 +45,16 @@ const LINE_KEYS = ["line", "start_line", "line_number", "lineno"];
 const RULE_KEYS = ["id", "rule", "check", "pattern_id", "rule_id"];
 const CATEGORY_KEYS = ["category", "taxonomy", "type"];
 
+/**
+ * Rule IDs confirmed (from a real scan, 2026-10) to report the scanner's OWN inability to
+ * fully inspect something, not a claim about the skill's behavior -- "AE1: referenced
+ * artifact was not completely inspected" showed up tagged HIGH severity and would otherwise
+ * have single-handedly failed the gate and inflated the severity breakdown purely because a
+ * file exceeded SkillSpector's analysis size/bounds limit, with zero evidence of anything
+ * malicious. Only AE1 is confirmed; add more here only once actually observed, not guessed.
+ */
+const COVERAGE_LIMITATION_RULE_IDS = new Set(["AE1"]);
+
 function firstDefined(obj: Record<string, unknown>, keys: string[]): unknown {
   for (const k of keys) {
     if (obj[k] !== undefined && obj[k] !== null) return obj[k];
@@ -101,14 +111,16 @@ function extractLocation(raw: Record<string, unknown>): { file: string; line?: n
 function mapRawFinding(raw: Record<string, unknown>): Finding {
   const { file, line } = extractLocation(raw);
   const message = String(firstDefined(raw, MESSAGE_KEYS) ?? "SkillSpector finding (no message field recognized).");
+  const rule = String(firstDefined(raw, RULE_KEYS) ?? "skillspector-finding");
   return {
-    rule: String(firstDefined(raw, RULE_KEYS) ?? "skillspector-finding"),
+    rule,
     severity: normalizeSeverity(firstDefined(raw, SEVERITY_KEYS)),
     message,
     remediation: raw.remediation !== undefined && raw.remediation !== null ? String(raw.remediation) : undefined,
     file,
     line,
     taxonomy: firstDefined(raw, CATEGORY_KEYS) as string | undefined,
+    isCoverageLimitation: COVERAGE_LIMITATION_RULE_IDS.has(rule),
   };
 }
 
@@ -190,9 +202,19 @@ export const skillSpectorScanner: Scanner = {
     ) {
       const ra = riskAssessment as Record<string, unknown>;
       const severity = normalizeSeverity(ra.severity);
+      const reportedFailure = severity === "high" || severity === "critical";
+      // SkillSpector's own aggregate severity can be driven entirely by coverage-limitation
+      // findings (confirmed real case: 24 "AE1: referenced artifact was not completely
+      // inspected" findings alone pushed its overall severity to HIGH, with zero genuine
+      // high/critical findings underneath) -- we can't see how SkillSpector weighs its own
+      // aggregate, but we CAN check whether any actual behavioral finding justifies failing.
+      // Never let "the scanner couldn't fully look at this" fail the gate on its own.
+      const hasGenuineHighOrCritical = findings.some(
+        (f) => !f.isCoverageLimitation && (f.severity === "high" || f.severity === "critical"),
+      );
       return {
         scannerName: skillSpectorScanner.name,
-        passed: severity !== "high" && severity !== "critical",
+        passed: !reportedFailure || !hasGenuineHighOrCritical,
         riskScore: ra.score as number,
         findings,
       };

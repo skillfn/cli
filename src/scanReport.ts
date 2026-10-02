@@ -2,10 +2,13 @@ import { writeFile } from "node:fs/promises";
 import chalk from "chalk";
 import type { Severity } from "./scanner/types.js";
 import type { AggregateReport, AggregatedSkill, UniqueRisk } from "./aggregateScan.js";
-import { heading, colorSeverity } from "./ui.js";
+import { heading, dim, colorSeverity } from "./ui.js";
 
 const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
 const ALWAYS_DETAILED: ReadonlySet<Severity> = new Set(["critical", "high"]);
+// Display-layer cap only -- UniqueRisk.locations itself is always the complete, uncapped
+// list (see aggregateScan.ts); --format json and the Markdown report always get everything.
+const MAX_LOCATIONS_DISPLAYED = 3;
 
 /**
  * Box-drawing tree connectors -- reddit-style nested replies, applied to a skill's findings:
@@ -63,8 +66,8 @@ function formatRiskTree(risks: UniqueRisk[], full: boolean, prefix: string): str
       lines.push(treeLine(sevChildPrefix, rIsLast, `${r.message}${occurrence}`));
 
       const riskChildPrefix = childPrefix(sevChildPrefix, rIsLast);
-      const shown = r.locations.slice(0, 3).join(", ");
-      const more = r.count > r.locations.length ? chalk.dim(`, +${r.count - r.locations.length} more`) : "";
+      const shown = r.locations.slice(0, MAX_LOCATIONS_DISPLAYED).join(", ");
+      const more = r.locations.length > MAX_LOCATIONS_DISPLAYED ? chalk.dim(`, +${r.locations.length - MAX_LOCATIONS_DISPLAYED} more`) : "";
       const subLines = [chalk.dim(`${r.rule} — ${shown}${more}`)];
       if (r.remediation) subLines.push(`${chalk.green("Remediation:")} ${r.remediation}`);
       subLines.forEach((text, i) => lines.push(treeLine(riskChildPrefix, i === subLines.length - 1, text)));
@@ -87,6 +90,21 @@ export function formatSkillBlock(skill: AggregatedSkill, options: { full?: boole
   topLevel.push({ text: `risk breakdown: ${formatBreakdown(skill.severityCounts)}` });
   if (skill.uniqueRisks.length > 0) {
     topLevel.push({ text: "risks & issues", children: (prefix) => formatRiskTree(skill.uniqueRisks, options.full ?? false, prefix) });
+  }
+  if (skill.scanLimitations.length > 0) {
+    // Deliberately NOT part of "risk breakdown"/"risks & issues" above -- these are the
+    // scanner reporting its own coverage gaps ("couldn't fully inspect X"), not a claim
+    // about the skill's behavior, so they're visually demoted (dim) and labeled as such
+    // rather than inflating the severity numbers a reader would otherwise trust.
+    topLevel.push({
+      text: dim(`scan limitations (${skill.scanLimitations.length} -- not security findings, see below)`),
+      children: (prefix) =>
+        skill.scanLimitations.flatMap((r, i) => {
+          const isLast = i === skill.scanLimitations.length - 1;
+          const occurrence = r.count > 1 ? ` (${r.count}x)` : "";
+          return [treeLine(prefix, isLast, dim(`${r.message}${occurrence} — ${r.rule}`))];
+        }),
+    });
   }
 
   topLevel.forEach((item, i) => {
@@ -173,11 +191,27 @@ export function buildMarkdownReport(report: AggregateReport): string {
         const occurrence = r.count > 1 ? ` (${r.count}x)` : "";
         lines.push(`- ${escapeMd(r.message)}${occurrence} — \`${r.rule}\``);
         for (const loc of r.locations) lines.push(`  - \`${loc}\``);
-        if (r.count > r.locations.length) lines.push(`  - _+${r.count - r.locations.length} more_`);
         if (r.remediation) lines.push(`  - **Remediation:** ${escapeMd(r.remediation)}`);
       }
       lines.push("", `</details>`, "");
     }
+
+    if (skill.scanLimitations.length > 0) {
+      lines.push(
+        `<details>`,
+        `<summary>Scan limitations (${skill.scanLimitations.length}) -- <em>not security findings</em></summary>`,
+        "",
+        `_The scanner couldn't fully inspect some content below (e.g. a file exceeded its analysis size/bounds). This is a coverage gap, not evidence the skill does anything risky._`,
+        "",
+      );
+      for (const r of skill.scanLimitations) {
+        const occurrence = r.count > 1 ? ` (${r.count}x)` : "";
+        lines.push(`- ${escapeMd(r.message)}${occurrence} — \`${r.rule}\``);
+        for (const loc of r.locations) lines.push(`  - \`${loc}\``);
+      }
+      lines.push("", `</details>`, "");
+    }
+
     lines.push("---", "");
   }
 

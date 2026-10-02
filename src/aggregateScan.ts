@@ -9,7 +9,10 @@ export interface UniqueRisk {
   message: string;
   remediation?: string;
   count: number;
-  locations: string[]; // "dir/file:line", capped
+  /** Every occurrence's location, uncapped -- a cap here would silently drop data for
+   * every consumer (terminal, Markdown, --format json alike). Display-layer code decides
+   * how many to actually show; this is the complete record. */
+  locations: string[];
 }
 
 export interface AggregatedSkill {
@@ -18,7 +21,13 @@ export interface AggregatedSkill {
   instances: string[]; // absolute skill directory paths
   severityCounts: Partial<Record<Severity, number>>;
   totalFindings: number;
-  uniqueRisks: UniqueRisk[]; // sorted by severity, highest first
+  uniqueRisks: UniqueRisk[]; // sorted by severity, highest first; excludes coverage-limitation findings
+  /** "The scanner couldn't fully inspect X" notices (e.g. SkillSpector's AE1) -- kept
+   * separate from uniqueRisks/severityCounts/totalFindings on purpose: these aren't
+   * evidence the skill does anything risky, and lumping them in with real findings both
+   * inflates the severity breakdown and can wrongly fail the security gate (confirmed real
+   * case: 24 of these alone pushed a skill to "44 HIGH" with only 20 genuine findings). */
+  scanLimitations: UniqueRisk[];
 }
 
 export interface AggregateReport {
@@ -29,7 +38,29 @@ export interface AggregateReport {
 }
 
 const SEVERITY_RANK: Record<Severity, number> = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
-const MAX_LOCATIONS_SHOWN = 3;
+
+function dedupeIntoRisks(findings: Array<{ finding: Finding; dir: string }>): UniqueRisk[] {
+  const uniqueMap = new Map<string, UniqueRisk>();
+  for (const { finding, dir } of findings) {
+    const key = `${finding.rule}::${finding.severity}::${finding.message}`;
+    const loc = finding.line ? `${dir}/${finding.file}:${finding.line}` : `${dir}/${finding.file}`;
+    const existing = uniqueMap.get(key);
+    if (existing) {
+      existing.count++;
+      existing.locations.push(loc);
+    } else {
+      uniqueMap.set(key, {
+        rule: finding.rule,
+        severity: finding.severity,
+        message: finding.message,
+        remediation: finding.remediation,
+        count: 1,
+        locations: [loc],
+      });
+    }
+  }
+  return [...uniqueMap.values()].sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]);
+}
 
 /**
  * Builds one AggregatedSkill from a flat list of (finding, source-directory) pairs --
@@ -43,35 +74,22 @@ export function buildAggregatedSkill(
   findings: Array<{ finding: Finding; dir: string }>,
   instances: string[],
 ): AggregatedSkill {
+  const realFindings = findings.filter((f) => !f.finding.isCoverageLimitation);
+  const limitationFindings = findings.filter((f) => f.finding.isCoverageLimitation);
+
   const severityCounts: Partial<Record<Severity, number>> = {};
-  const uniqueMap = new Map<string, UniqueRisk>();
-  for (const { finding, dir } of findings) {
+  for (const { finding } of realFindings) {
     severityCounts[finding.severity] = (severityCounts[finding.severity] ?? 0) + 1;
-    const key = `${finding.rule}::${finding.severity}::${finding.message}`;
-    const loc = finding.line ? `${dir}/${finding.file}:${finding.line}` : `${dir}/${finding.file}`;
-    const existing = uniqueMap.get(key);
-    if (existing) {
-      existing.count++;
-      if (existing.locations.length < MAX_LOCATIONS_SHOWN) existing.locations.push(loc);
-    } else {
-      uniqueMap.set(key, {
-        rule: finding.rule,
-        severity: finding.severity,
-        message: finding.message,
-        remediation: finding.remediation,
-        count: 1,
-        locations: [loc],
-      });
-    }
   }
-  const uniqueRisks = [...uniqueMap.values()].sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]);
+
   return {
     name,
     description,
     instances: [...new Set(instances)],
     severityCounts,
-    totalFindings: findings.length,
-    uniqueRisks,
+    totalFindings: realFindings.length,
+    uniqueRisks: dedupeIntoRisks(realFindings),
+    scanLimitations: dedupeIntoRisks(limitationFindings),
   };
 }
 
