@@ -75,6 +75,9 @@ export type InstallOfferContext = "scan" | "publish" | "doctor";
 export interface InstallOfferOptions {
   /** Skip the interactive menu and proceed as if "install for me" was chosen -- e.g. --yes. */
   autoYes?: boolean;
+  /** Print the manual install steps and return without installing or prompting -- used when
+   * a caller's --yes must not install software on its own (see init's --install-scanner). */
+  decline?: boolean;
   context: InstallOfferContext;
 }
 
@@ -101,6 +104,13 @@ async function runWithSpinner(label: string, cmd: string, args: string[]): Promi
 /** Returns true if SkillSpector ended up installed (already was, or the offer just succeeded). */
 export async function offerToInstallSkillSpector(options: InstallOfferOptions): Promise<boolean> {
   if (await commandWorks("skillspector")) return true;
+  if (options.decline) {
+    console.error(
+      "Not installing the security scanner (pass --install-scanner to allow it). Install it yourself:\n  " +
+        (await manualInstallInstructions()).replace(/\n/g, "\n  "),
+    );
+    return false;
+  }
   if (!process.stdin.isTTY && !options.autoYes) {
     // Never hang a non-interactive/piped context -- but say why, and with the real
     // instructions (including the `uv` step if that's missing too), instead of bailing

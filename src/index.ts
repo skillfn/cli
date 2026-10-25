@@ -9,6 +9,7 @@ import { linkCommand } from "./commands/link.js";
 import { watchCommand } from "./commands/watch.js";
 import { configGetCommand, configSetCommand, configUnmuteCommand } from "./commands/config.js";
 import { login } from "./session.js";
+import { createCommand } from "./commands/create.js";
 import { initCommand } from "./commands/init.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { completionCommand } from "./commands/completion.js";
@@ -120,8 +121,18 @@ program
 
 program
   .command("init")
-  .description("Scaffold a new, scan-clean SKILL.md from a short interactive prompt.")
+  .description("Discover local coding sessions and skills, scan selected skills, and link passing skills across active providers.")
+  .option("--yes", "answer prompts with safe defaults: scan all discovered skills; never install, rename, or link without the flags below")
+  .option("--install-scanner", "allow installing the missing SkillSpector scanner")
+  .option("--rename", "rename noncanonical skill.md manifests to SKILL.md")
+  .option("--link", "create symlinks for passing skills across active providers")
+  .option("--dry-run", "scan and print planned renames and links; change nothing and save no index")
   .action(initCommand);
+
+program
+  .command("create")
+  .description("Scaffold a new, scan-clean SKILL.md from a short interactive prompt.")
+  .action(createCommand);
 
 program
   .command("doctor")

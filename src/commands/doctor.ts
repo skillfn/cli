@@ -24,7 +24,7 @@ async function checkLine(label: string, check: () => Promise<string | undefined>
   return true;
 }
 
-function isSkillSpectorInstalled(): Promise<boolean> {
+export function isSkillSpectorInstalled(): Promise<boolean> {
   return new Promise((resolve) => {
     const child = spawn("skillspector", ["--version"], { stdio: "ignore" });
     child.on("error", () => resolve(false));
@@ -64,6 +64,8 @@ async function findDanglingLinks(): Promise<string[]> {
 
 interface DoctorOptions {
   yes?: boolean;
+  /** Never offer or perform the scanner install (callers' --yes without --install-scanner). */
+  declineInstall?: boolean;
 }
 
 export async function doctorCommand(options: DoctorOptions = {}): Promise<void> {
@@ -86,7 +88,7 @@ export async function doctorCommand(options: DoctorOptions = {}): Promise<void> 
       : `required, not found. Install:\n      ${(await manualInstallInstructions()).replace(/\n/g, "\n      ")}`,
   );
   if (!hasSkillSpector) {
-    await offerToInstallSkillSpector({ context: "doctor", autoYes: options.yes });
+    await offerToInstallSkillSpector({ context: "doctor", autoYes: options.yes, decline: options.declineInstall });
   }
 
   await checkLine("hub session", async () => {

@@ -9,6 +9,7 @@ const COMMANDS = [
   "publish",
   "update",
   "init",
+  "create",
   "doctor",
   "completion",
   "upgrade",

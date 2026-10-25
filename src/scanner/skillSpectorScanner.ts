@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, sep } from "node:path";
 import {
@@ -229,7 +229,8 @@ async function stageFilteredSkillDir(skillDir: string, excludeDirs: string[]): P
   return { stagedDir, cleanup: () => rm(stageRoot, { recursive: true, force: true }) };
 }
 
-function runSkillSpector(skillDir: string, outputPath: string, baselinePath: string | undefined, workflowSeconds: number): Promise<void> {
+/** Resolves with SkillSpector's stderr (empty when it said nothing). */
+function runSkillSpector(skillDir: string, outputPath: string, baselinePath: string | undefined, workflowSeconds: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const args = ["scan", skillDir, "--no-llm", "--format", "json", "--output", outputPath];
     // --show-suppressed always, when a baseline applies -- cheap (doesn't affect scoring),
@@ -262,8 +263,9 @@ function runSkillSpector(skillDir: string, outputPath: string, baselinePath: str
     // Confirmed (2026-08-20 test run): SkillSpector exits 0 even with MEDIUM-severity
     // findings present, so exit code isn't a reliable pass/fail signal either way — we
     // always parse the JSON report regardless of exit code.
-    child.on("close", () => resolve());
-    void stderr;
+    // Exit code isn't a reliable pass/fail signal (see above), so don't reject on it -- but keep
+    // stderr so "produced no output file" can say what SkillSpector actually complained about.
+    child.on("close", () => resolve(stderr.trim()));
   });
 }
 
@@ -293,7 +295,7 @@ async function runOnce(skillDir: string, vendoredDirs: string[], baselinePath: s
     // the staged skill copy): the "unrecognized schema" branch below keeps workDir on disk so
     // the raw report it points to is actually inspectable -- deleting it there would make
     // that error message a lie.
-    await runSkillSpector(stagedDir, outputPath, baselinePath, workflowSeconds);
+    const stderrText = await runSkillSpector(stagedDir, outputPath, baselinePath, workflowSeconds);
 
     let raw: string;
     try {
@@ -301,7 +303,8 @@ async function runOnce(skillDir: string, vendoredDirs: string[], baselinePath: s
     } catch {
       await rm(workDir, { recursive: true, force: true });
       throw new Error(
-        "SkillSpector ran but produced no output file — check its version supports --format json --output.",
+        "SkillSpector ran but produced no output file" +
+          (stderrText ? `: ${stderrText}` : " — check its version supports --format json --output."),
       );
     }
 
@@ -423,7 +426,14 @@ function hitWorkflowDeadline(result: ScanResult): boolean {
 export const skillSpectorScanner: Scanner = {
   name: "nvidia-skillspector",
 
-  async scan(skillDir: string): Promise<ScanResult> {
+  async scan(requestedDir: string): Promise<ScanResult> {
+    // Skills are routinely installed as symlinks (e.g. ~/.claude/skills/x -> a dotfiles repo).
+    // SkillSpector refuses a symlinked input outright ("Refusing to resolve a symlinked
+    // input", exit 2, no report), and fs.cp on a symlinked source copies the link rather than
+    // the folder -- so staging a symlinked skill hands SkillSpector a symlink too. Resolve once
+    // here so vendored-subtree detection, the baseline lookup, and staging all agree on the
+    // real directory.
+    const skillDir = await realpath(requestedDir);
     const { boundaries } = await findVendoredSubtreesUnder(skillDir);
     const vendoredDirs = boundaries.map((b) => b.dir);
     // A baseline is always read from the skill's OWN directory, never the staged copy --

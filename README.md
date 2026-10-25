@@ -48,12 +48,33 @@ Results get their own dim, clearly labeled branch under each skill (`broken refe
 
 SkillSpector enforces its own resource ceilings (documented in its [ANALYSIS_RESOURCE_BOUNDS.md](https://github.com/NVIDIA/SkillSpector/blob/main/docs/ANALYSIS_RESOURCE_BOUNDS.md)) as protection against adversarial bundles at scale — not something skillfn patches around. Its default aggregate-scan deadline is 10 minutes; skillfn raises that to 30 minutes (`SKILLSPECTOR_MAX_WORKFLOW_SECONDS`) since a local, user-owned skill directory isn't the worst-case scenario that default defends against. If a scan still doesn't fully complete (a skill with an unusually large file tree), output clearly flags it ("Scan did not fully complete (NN% coverage)") rather than silently reporting a partial result as if it were whole, and the scanner's own "couldn't fully inspect X" notices are reported separately from real findings instead of being counted as confirmed risks. Set `SKILLSPECTOR_MAX_WORKFLOW_SECONDS` yourself (in seconds) to raise it further, or `SKILLSPECTOR_MAX_STATIC_ANALYSIS_SECONDS_PER_ARTIFACT` for the per-file static-analysis budget (default 300s).
 
-## `init` — scaffold a new skill
+## `init` — set up this device
+
+`skillfn init` runs `doctor`, discovers Claude Code and Codex sessions and project paths, inventories skills across the supported provider directories, and saves a local lookup table at `~/.skillfn/index.json`. It asks which skills to scan, offers to normalize `skill.md`/`Skill.md` to `SKILL.md`, checks local Markdown references, and offers to link skills with valid manifests that pass a complete security scan into active providers' discovery paths. Security findings and broken references are saved in the index for review; only the safe filename correction is automatic. Existing paths are never overwritten. Malformed manifests are indexed and scanned but are not linked. Providers without a known session format are discovered through their existing skill directories; only Claude Code and Codex session transcripts are currently indexed. Session contents are never stored in the lookup table.
+
+Run interactively for the selection and permission prompts. Every side effect has its own flag, and `--yes` never performs one by itself:
+
+| Flag | What it allows |
+|---|---|
+| `--yes` | Answer prompts with their safe defaults: scan all discovered skills. Renames, links, and installs default to No. |
+| `--install-scanner` | Install the missing SkillSpector scanner (otherwise the manual steps are printed). |
+| `--rename` | Rename noncanonical `skill.md` manifests to `SKILL.md`. |
+| `--link` | Create symlinks for passing skills across active providers. Existing paths are skipped. |
+| `--dry-run` | Scan and print the planned renames and links. Changes nothing and saves no index. |
+
+Without a TTY or `--yes`, it writes the inventory and stops before scanning or linking. Re-running `init` refreshes the lookup table and skips existing link paths. Synthesis is planned for a later release.
+
+```
+skillfn init --dry-run                       # preview
+skillfn init --yes --rename --link           # scan all, then apply renames and links (scripts/CI)
+```
+
+## `create` — scaffold a new skill
 
 Prompts for a name/description (and whether it needs network/exec) and writes a scan-clean `SKILL.md` skeleton, so a first `scan` isn't a cold start.
 
 ```
-skillfn init
+skillfn create
 ```
 
 ## `doctor` — diagnose common problems

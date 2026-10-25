@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import * as p from "@clack/prompts";
 import { printBanner } from "../asciiArt.js";
 import { getInstalledVersion } from "../selfVersion.js";
@@ -30,7 +30,8 @@ const ITEMS: MenuItem[] = [
     promptArg: { message: "Path to the skill to update:", placeholder: "./my-skill" },
   },
   { value: "doctor", label: "Doctor", hint: "diagnose common setup problems" },
-  { value: "init", label: "Init", hint: "scaffold a new SKILL.md" },
+  { value: "init", label: "Init", hint: "discover, scan, and link skills across providers" },
+  { value: "create", label: "Create", hint: "scaffold a new SKILL.md" },
   { value: "login", label: "Login", hint: "sign in to the hub" },
   { value: "upgrade", label: "Upgrade", hint: "check npm for a newer skillfn release" },
 ];
@@ -77,5 +78,14 @@ export async function menuCommand(): Promise<void> {
     args.push(arg.trim());
   }
 
-  execFileSync(process.execPath, [process.argv[1], ...args], { stdio: "inherit" });
+  // process.execArgv carries runtime loader flags (e.g. tsx's --import/--require under
+  // `npm run dev`); without them the child can't resolve `./x.js` imports to `./x.ts`.
+  // It's empty when running the compiled dist/, so this is a no-op there.
+  //
+  // spawnSync, not execFileSync: commands signal results through their exit code (init exits 1
+  // when no skill passed, for CI). execFileSync would throw on that and dump a stack trace over
+  // a perfectly normal outcome, so mirror the child's exit code instead of raising.
+  const child = spawnSync(process.execPath, [...process.execArgv, process.argv[1], ...args], { stdio: "inherit" });
+  if (child.error) throw child.error;
+  process.exitCode = child.status ?? 1;
 }
